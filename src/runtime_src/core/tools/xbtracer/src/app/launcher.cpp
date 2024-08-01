@@ -2,7 +2,6 @@
 // Copyright (C) 2024 Advanced Micro Devices, Inc. All rights reserved.
 
 #include <array>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -17,15 +16,21 @@
 #include <shlwapi.h>
 #include <windows.h>
 #else
+#include <sys/stat.h>
 #include <unistd.h>
-#endif
+#endif /* #ifdef _WIN32 */
 
 #ifdef _WIN32
 // Bring in the Shlwapi into the build
 # pragma comment (lib, "Shlwapi.lib")
-#endif
+#endif /* #ifdef _WIN32 */
 
 namespace {
+// Global mutexes to ensure thread safety when accessing shared resources
+// NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables)
+std::mutex env_mutex;
+// NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
+
 constexpr unsigned int str_sz_s = 32;
 constexpr unsigned int str_sz_m = 128;
 constexpr unsigned int str_sz_l = 256;
@@ -34,7 +39,7 @@ constexpr unsigned int w32 = 32;
 constexpr unsigned int w64 = 64;
 constexpr unsigned int max_cmd_args = 8;
 constexpr unsigned int fw_9 = 9;
-
+constexpr const char*  inst_lib_name = "libxrt_capture.so";
 class launcher
 {
   public:
@@ -49,13 +54,19 @@ class launcher
   bool m_debug = false;
   bool m_inst_debug = false;
   std::string m_name;
+  std::string m_lib_path;
   std::string m_cmdline;
+  std::string m_app_name_env;
+  std::string m_ld_preload_env;
+  std::string m_start_time_env;
+  std::string m_inst_dbg_env;
   std::vector<std::string> m_child_cmd_args;
+  struct timespec m_start_time = {0, 0};
 
-  #ifdef _WIN32
+#ifdef _WIN32
   STARTUPINFOA m_si;
   PROCESS_INFORMATION m_pi;
-  #endif
+#endif /* #ifdef _WIN32 */
 
   // Delete copy constructor and assignment operator
   launcher(const launcher&) = delete;
@@ -118,6 +129,75 @@ void log_d(const Args&... args)
   }
 }
 
+/*
+ * thread safe wrapper of putenv()
+ */
+void putenv_t(std::string& new_entry)
+{
+  std::lock_guard lock(env_mutex);
+
+#ifdef _WIN32
+  _putenv(new_entry.data());
+#else
+  // NOLINTNEXTLINE(concurrency-mt-unsafe) - protected by env_mutex
+  putenv(new_entry.data());
+#endif /* #ifdef _WIN32 */
+}
+
+/*
+ * Checks if a file exists at the given path.
+ */
+bool file_exists(const std::string& path)
+{
+#ifdef _WIN32
+  DWORD file_attr = GetFileAttributes(path.c_str());
+  return !(file_attr == INVALID_FILE_ATTRIBUTES);
+#else
+  struct stat buffer{};
+  return (stat(path.c_str(), &buffer) == 0);
+#endif /* #ifdef _WIN32 */
+}
+
+/**
+ * Searches for a shared library in the directories specified by
+ * LD_LIBRARY_PATH.
+ */
+std::string find_library(const std::string& lib_name)
+{
+  std::lock_guard lock(env_mutex);
+#ifdef _WIN32
+  TCHAR library_path[4096];
+  DWORD result = GetEnvironmentVariable(TEXT("PATH"), library_path, 4096);
+  if (result < 0 || result > 4096 )
+    log_e("Failed to read PATH Environment Variable - result = ", result);
+#else
+  // NOLINTNEXTLINE(concurrency-mt-unsafe) - protected by mutex
+  const char* library_path = std::getenv("LD_LIBRARY_PATH");
+  if (library_path == nullptr)
+  {
+    log_e("LD_LIBRARY_PATH is not set.");
+    return "";
+  }
+#endif /* #ifdef _WIN32 */
+
+  std::istringstream path_stream(library_path);
+  std::string path;
+#ifdef _WIN32
+  while (std::getline(path_stream, path, ';'))
+  {
+    std::string full_path = path + "\\" + lib_name;
+#else
+  while (std::getline(path_stream, path, ':'))
+  {
+    std::string full_path = path + "/" + lib_name;
+#endif /* #ifdef _WIN32 */
+    if (file_exists(full_path))
+      return full_path;
+  }
+
+  return "";
+}
+
 // Function to split a string into a vector of strings based on spaces
 int split_by_ws(const std::string &str, std::vector<std::string>& tokens)
 {
@@ -131,7 +211,8 @@ int split_by_ws(const std::string &str, std::vector<std::string>& tokens)
 }
 
 // Function to convert vector of strings to array of C-strings
-int convert_to_c_array(const std::vector<std::string> &vec, char **arr, size_t arr_sz)
+int convert_to_c_array(const std::vector<std::string> &vec, char **arr,
+                       size_t arr_sz)
 {
   if (arr_sz <= vec.size())
   {
@@ -140,9 +221,9 @@ int convert_to_c_array(const std::vector<std::string> &vec, char **arr, size_t a
   }
 
   for (size_t i = 0; i < vec.size(); ++i)
-    arr[i] = const_cast<char *>(vec[i].c_str());
+    arr[i] = const_cast<char *>(vec[i].c_str()); // NOLINT
 
-  arr[vec.size()] = nullptr; // NULL-terminate the array
+  arr[vec.size()] = nullptr; // NOLINT NULL-terminate the array
   return 0;
 }
 
@@ -175,14 +256,87 @@ int parse_cmdline(launcher& app, int argc, char* argv[])
   if (optind == argc)
     log_f("There should be alleast 1 argument without option switch");
 
-  split_by_ws(argv[argc-1], app.m_child_cmd_args);
-  for (auto& element : app.m_child_cmd_args)
+  if (optind <= static_cast<int>(args.size() - 1))
+    app.m_cmdline = args[optind++];
+  else
+    log_f("Invalid optindex: ", optind, "args size: ", args.size());
+
+  for (size_t idx = optind; idx < args.size(); idx++)
   {
-    app.m_cmdline += element;
     app.m_cmdline += " ";
+    app.m_cmdline += args[idx];
+  }
+  log_d("Application to intercept = \"", app.m_cmdline, "\"");
+
+  // Split the last argument using white-space - NOLINTNEXTLINE
+  split_by_ws(argv[argc-1], app.m_child_cmd_args);
+
+  return 0;
+}
+
+// Time formatting and trace directory printing
+void print_trace_location(launcher& app)
+{
+  #ifdef _WIN32
+  auto times = get_current_time_as_string();
+  std::string formatted_time = times.second;
+  #else
+  std::tm tm_time{};
+  localtime_r(&app.m_start_time.tv_sec, &tm_time);
+  std::stringstream ss;
+  ss << std::put_time(&tm_time, "%Y-%m-%d_%H-%M-%S");
+  std::string formatted_time = ss.str();
+  #endif
+  std::filesystem::path current_dir = std::filesystem::current_path();
+  std::filesystem::path trace_dir = current_dir / formatted_time;
+  std::cout << "\nTraces can be found at: " << trace_dir.string() << "\n\n";
+}
+
+int set_envs(launcher& app)
+{
+  /* Adding TRACE_APP_NAME Env */
+  app.m_app_name_env = "TRACE_APP_NAME=";
+  app.m_app_name_env += app.m_cmdline;
+  log_d("Adding to ENV : ", app.m_app_name_env);
+  putenv_t(app.m_app_name_env);
+
+  /* Capture current time */
+  clock_gettime(CLOCK_REALTIME, &app.m_start_time);
+
+  /* Convert the timespec to string */
+  std::ostringstream oss;
+  oss << app.m_start_time.tv_sec << '.' << std::setw(fw_9) << std::setfill('0')
+      << app.m_start_time.tv_nsec;
+  std::string time_str = oss.str();
+
+  /* Adding START_TIME Env */
+  app.m_start_time_env = "START_TIME=";
+  app.m_start_time_env += time_str;
+  log_d("Adding to ENV : ", app.m_start_time_env);
+  putenv_t(app.m_start_time_env);
+
+  /* Adding INST_DEBUG Env if enabled in command option */
+  if (app.m_inst_debug)
+  {
+    app.m_inst_dbg_env = "INST_DEBUG=TRUE";
+    log_d("Adding to ENV : ", app.m_inst_dbg_env);
+    putenv_t(app.m_inst_dbg_env);
   }
 
-  log_d("Application to intercept = \"", app.m_cmdline, "\"");
+  if (!app.m_lib_path.empty())
+  {
+    app.m_ld_preload_env = "LD_PRELOAD=";
+    /* Setting LD_PRELOAD Env */
+    app.m_ld_preload_env += app.m_lib_path;
+    log_d("Adding to ENV : ", app.m_ld_preload_env);
+    putenv_t(app.m_ld_preload_env);
+
+    print_trace_location(app);
+  }
+  else
+  {
+    log_e(inst_lib_name, " not found, traces would not be captured");
+  }
 
   return 0;
 }
@@ -363,6 +517,7 @@ int posix_launcher(int& argc, char* argv[])
 {
   launcher& app = launcher::get_instance();
 
+  // NOLINTNEXTLINE
   std::filesystem::path path(argv[0]);
   if (!path.filename().empty())
     app.m_name = path.filename().string();
@@ -372,6 +527,14 @@ int posix_launcher(int& argc, char* argv[])
   */
   parse_cmdline(app, argc, argv);
 
+  /* Find instrumentation library */
+  app.m_lib_path = find_library(inst_lib_name);
+
+  /**
+    Set enviornments
+  */
+  set_envs(app);
+
   /**
     Launch process
   */
@@ -379,7 +542,7 @@ int posix_launcher(int& argc, char* argv[])
 
   return 0;
 }
-#endif // #ifdef _WIN32
+#endif /* #ifdef _WIN32 */
 
 }; // namespace
 
@@ -391,7 +554,7 @@ int posix_launcher(int& argc, char* argv[])
  */
 // NOLINTNEXTLINE (cppcoreguidelines-avoid-non-const-global-variables)
 extern char **environ;
-#endif
+#endif /* #ifndef _WIN32 */
 
 /*
  * Main Function
@@ -399,15 +562,13 @@ extern char **environ;
 int main(int argc, char* argv[])
 {
   try {
-  #ifdef _WIN32
+#ifdef _WIN32
     win_launcher(argc, argv);
-  #else
+#else
     posix_launcher(argc, argv);
-  #endif
+#endif /* #ifdef _WIN32 */
   }
   catch (const std::runtime_error& e) {
     std::cerr << "Failed to launch - Reason " << e.what() << std::endl;
   }
-
-  return 0;
 }
