@@ -40,10 +40,18 @@ constexpr unsigned int w32 = 32;
 constexpr unsigned int w64 = 64;
 constexpr unsigned int max_cmd_args = 8;
 constexpr unsigned int fw_9 = 9;
+#ifdef _WIN32
+constexpr const char* inst_lib_name = "xrt_capture.dll";
+constexpr const char path_delimiter = ';';
+constexpr std::string_view path_separator = "\\";
+constexpr std::string_view env_path_key = "PATH";
+#else
 constexpr const char* inst_lib_name = "libxrt_capture.so";
 constexpr const char path_delimiter = ':';
 constexpr std::string_view path_separator = "/";
 constexpr const char* env_path_key = "LD_LIBRARY_PATH";
+#endif /* #ifdef _WIN32 */
+
 class launcher
 {
   public:
@@ -59,6 +67,7 @@ class launcher
   bool m_inst_debug = false;
   std::string m_name;
   std::string m_lib_path;
+  std::string m_extra_lib;
   std::string m_cmdline;
   std::string m_app_name_env;
   std::string m_ld_preload_env;
@@ -69,6 +78,8 @@ class launcher
 #ifdef _WIN32
   STARTUPINFOA m_si;
   PROCESS_INFORMATION m_pi;
+  LPTHREAD_START_ROUTINE m_idt_fixup = nullptr;
+  HMODULE m_hlib = nullptr;
 #endif /* #ifdef _WIN32 */
 
   // Delete copy constructor and assignment operator
@@ -251,8 +262,12 @@ int parse_cmdline(launcher& app, int argc, char* argv[])
   static std::mutex mutex;
   std::lock_guard lock(mutex);
 
+#ifdef _WIN32
+  while ((option = getopt(argc, argv, "vVL:")) != -1)
+#else
   // NOLINTNEXTLINE(concurrency-mt-unsafe) - getopt is protected by a mutex
   while ((option = getopt(argc, argv, "vV")) != -1)
+#endif /* #ifdef _WIN32 */
   {
     switch (option)
     {
@@ -264,7 +279,13 @@ int parse_cmdline(launcher& app, int argc, char* argv[])
         app.m_debug = true;
         app.m_inst_debug = true;
         break;
-
+#ifdef _WIN32
+      case 'L':
+        if (std::filesystem::exists(optarg))
+          app.m_extra_lib = optarg;
+        else
+          log_f("file : ", optarg, " doesn't exist");
+#endif /* #ifdef _WIN32 */
       default:
         break;
     }
@@ -477,17 +498,20 @@ int create_child_proc_as_suspended(launcher& app)
 int resume_child_proc_and_wait_for_completion(launcher& app)
 {
   DWORD retval = 0;
+  int retcode = 0;
   if (ResumeThread(app.m_pi.hThread) < 0)
   {
     log_e("Failed to resume thread");
-    return -1;
+    retcode = -1;
+    goto l_exit;
   }
 
   // Wait for child process to finish
   if (WaitForSingleObject(app.m_pi.hProcess, INFINITE) != WAIT_OBJECT_0)
   {
     log_e("Waiting for child process failed");
-    return -2;
+    retcode = -2;
+    goto l_exit;
   }
   log_d("Child process resumed, Waiting for child process to finish");
 
@@ -495,10 +519,19 @@ int resume_child_proc_and_wait_for_completion(launcher& app)
   if (GetExitCodeProcess(app.m_pi.hProcess, &retval) == FALSE)
   {
     log_e("Failed to read child process exit code");
-    return -3;
+    retcode = -3;
+    goto l_exit;
   }
 
-  return retval;
+l_exit:
+  CloseHandle(app.m_pi.hProcess);
+  CloseHandle(app.m_pi.hThread);
+  FreeModule(app.m_hlib);
+  log_d("Closed handle ", app.m_hlib);
+  if (retcode)
+    return retcode;
+  else
+    return retval;
 }
 
 /*
@@ -524,6 +557,32 @@ static bool check_compatibility(HANDLE parent, HANDLE child)
   return true;
 }
 
+/*
+ * Checks if instrumentation library has required fixup function exported
+ */
+bool inst_lib_has_fixup_fn(launcher& app)
+{
+  if(!app.m_lib_path.empty())
+  {
+    app.m_hlib = LoadLibraryA(app.m_lib_path.c_str());
+
+    if (app.m_hlib == nullptr)
+      log_f(app.m_lib_path, " Loading failed");
+
+    log_d("Library ", app.m_lib_path, " loaded");
+
+    app.m_idt_fixup =
+        (LPTHREAD_START_ROUTINE)GetProcAddress(app.m_hlib, "idt_fixup");
+
+    if (app.m_idt_fixup == nullptr)
+      return FALSE;
+
+    return TRUE;
+  }
+  else
+    return FALSE;
+}
+
 int win_launcher(int& argc, char* argv[])
 {
   DWORD retval = 0;
@@ -538,6 +597,20 @@ int win_launcher(int& argc, char* argv[])
   */
   parse_cmdline(app, argc, argv);
 
+  /*
+    Find and Check capture lib
+  */
+  app.m_lib_path = find_library(std::string(inst_lib_name));
+  if (!inst_lib_has_fixup_fn(app))
+    log_f("Intrumentation hook not found in library: ", app.m_lib_path);
+  else
+    log_d("Intrumentation hook found in ", app.m_lib_path);
+
+  /**
+    Set enviornments
+  */
+  set_envs(app);
+
   /**
     Create child process as suspended
   */
@@ -550,12 +623,30 @@ int win_launcher(int& argc, char* argv[])
     log_f("Compatability check failed. Exiting ...");
 
   /**
+    Instrument application binary
+  */
+  if (!app.m_lib_path.empty())
+  {
+    instrument_iat(app.m_pi.hProcess, app.m_lib_path, app.m_idt_fixup);
+
+    /**
+      instrument additional library (if required)
+    */
+    if (!app.m_extra_lib.empty())
+        instrument_iat(app.m_pi.hProcess, app.m_lib_path, app.m_idt_fixup,
+          app.m_extra_lib);
+  }
+
+  /**
     Resume child process and wait for finish
   */
   log_d("Resuming child process");
   retval = resume_child_proc_and_wait_for_completion(app);
 
-  log_d("Child process completed with exit code ", retval);
+  if (retval)
+    log_d("Child process completed with exit code ", retval);
+  else
+    print_trace_location(app);
 
   return 0;
 }

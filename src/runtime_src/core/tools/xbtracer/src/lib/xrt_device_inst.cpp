@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2024 Advanced Micro Devices, Inc. All rights reserved.
 
+#define XCL_DRIVER_DLL_EXPORT
 #include "capture.h"
 #include "logger.h"
 
@@ -31,7 +32,7 @@ uuid device::load_xclbin(const std::string& fnm)
   XRT_TOOLS_XBT_FUNC_ENTRY(fnm);
   uuid muuid;
   XRT_TOOLS_XBT_CALL_METD_RET(dtbl.device.load_xclbin_fnm, muuid, fnm);
-  unsigned int file_size = fs::file_size(fnm);
+  size_t file_size = fs::file_size(fnm);
   std::vector<unsigned char> buffer(file_size);
   std::ifstream file(fnm);
   // NOLINTNEXTLINE (cppcoreguidelines-pro-type-reinterpret-cast)
