@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <regex>
 #include <string>
 #include <utility>
 
@@ -50,7 +51,80 @@ const static std::unordered_map < std::string, void **> fname2fptr_map = {
   // NOLINTBEGIN(cppcoreguidelines-pro-type-cstyle-cast)
   /* device class maps */
   {"xrt::device::device(unsigned int)", (void **) &dtbl.device.ctor},
+  {"xrt::device::device(std::string const&)", (void **) &dtbl.device.ctor_bdf},
+  {"xrt::device::device(void*)", (void **) &dtbl.device.ctor_dhdl},
+  {"xrt::device::register_xclbin(xrt::xclbin const&)", (void **) &dtbl.device.register_xclbin},
+  {"xrt::device::load_xclbin(axlf const*)", (void **) &dtbl.device.load_xclbin_axlf},
   {"xrt::device::load_xclbin(std::string const&)", (void **) &dtbl.device.load_xclbin_fnm},
+  {"xrt::device::load_xclbin(xrt::xclbin const&)", (void **) &dtbl.device.load_xclbin_obj},
+  {"xrt::device::get_xclbin_uuid() const", (void **) &dtbl.device.get_xclbin_uuid},
+  {"xrt::device::reset()", (void **) &dtbl.device.reset},
+
+  /* bo class maps */
+  {"xrt::bo::bo(xrt::device const&, void*, unsigned long, xrt::bo::flags, unsigned int)",  (void **) &dtbl.bo.ctor_dev_up_s_f_g},
+  {"xrt::bo::bo(xrt::device const&, void*, unsigned long, unsigned int)",  (void **) &dtbl.bo.ctor_dev_up_s_g},
+  {"xrt::bo::bo(xrt::device const&, unsigned long, xrt::bo::flags, unsigned int)", (void **) &dtbl.bo.ctor_dev_s_f_g},
+  {"xrt::bo::bo(xrt::device const&, unsigned long, unsigned int)", (void **) &dtbl.bo.ctor_dev_s_g},
+  {"xrt::bo::bo(xrt::hw_context const&, void*, unsigned long, xrt::bo::flags, unsigned int)", (void **) &dtbl.bo.ctor_cxt_up_s_f_g},
+  {"xrt::bo::bo(xrt::hw_context const&, void*, unsigned long, unsigned int)", (void **) &dtbl.bo.ctor_cxt_up_s_g},
+  {"xrt::bo::bo(xrt::hw_context const&, unsigned long, xrt::bo::flags, unsigned int)", (void **) &dtbl.bo.ctor_cxt_s_f_g},
+  {"xrt::bo::bo(xrt::hw_context const&, unsigned long, unsigned int)", (void **) &dtbl.bo.ctor_cxt_s_g},
+  {"xrt::bo::bo(void*, int)", (void **) &dtbl.bo.ctor_exp_bo},
+  {"xrt::bo::bo(void*, xrt::pid_type, int)", (void **) &dtbl.bo.ctor_exp_bo_pid},
+  {"xrt::bo::bo(xrt::bo const&, unsigned long, unsigned long)", (void **) &dtbl.bo.ctor_bo_s_o},
+  {"xrt::bo::bo(void*, xcl_buffer_handle)", (void **) &dtbl.bo.ctor_xcl_bh},
+  {"xrt::bo::size() const", (void **) &dtbl.bo.size},
+  {"xrt::bo::address() const", (void **) &dtbl.bo.address},
+  {"xrt::bo::get_memory_group() const", (void **) &dtbl.bo.get_memory_group},
+  {"xrt::bo::get_flags() const", (void **) &dtbl.bo.get_flags},
+  {"xrt::bo::export_buffer()", (void **) &dtbl.bo.export_buffer},
+  {"xrt::bo::async(xclBOSyncDirection, unsigned long, unsigned long)", (void **) &dtbl.bo.async},
+  {"xrt::bo::sync(xclBOSyncDirection, unsigned long, unsigned long)",  (void **) &dtbl.bo.sync},
+  {"xrt::bo::map()",  (void **) &dtbl.bo.map},
+  {"xrt::bo::write(void const*, unsigned long, unsigned long)", (void **) &dtbl.bo.write},
+  {"xrt::bo::read(void*, unsigned long, unsigned long)", (void **) &dtbl.bo.read},
+  {"xrt::bo::copy(xrt::bo const&, unsigned long, unsigned long, unsigned long)", (void **) &dtbl.bo.copy},
+  {"xrt::bo::bo(void*)", (void **) &dtbl.bo.ctor_xcl_bh},
+  {"xrt::ext::bo::bo(xrt::hw_context const&, unsigned long, xrt::ext::bo::access_mode)", (void **) &dtbl.ext.bo_ctor_cxt_s_a},
+
+  /* run class maps */
+  {"xrt::run::run(xrt::kernel const&)", (void **)  &dtbl.run.ctor},
+  {"xrt::run::start()", (void **) &dtbl.run.start},
+  {"xrt::run::start(xrt::autostart const&)", (void **) &dtbl.run.start_itr},
+  {"xrt::run::stop()", (void **) &dtbl.run.stop},
+  {"xrt::run::abort()", (void **) &dtbl.run.abort},
+  {"xrt::run::wait(std::chrono::duration<long, std::ratio<1l, 1000l> > const&) const", (void **) &dtbl.run.wait},
+  {"xrt::run::wait2(std::chrono::duration<long, std::ratio<1l, 1000l> > const&) const", (void **) &dtbl.run.wait2},
+  {"xrt::run::state() const", (void **) &dtbl.run.state},
+  {"xrt::run::return_code() const", (void **) &dtbl.run.return_code},
+  {"xrt::run::add_callback(ert_cmd_state, std::function<void (void const*, ert_cmd_state, void*)>, void*)", (void **) &dtbl.run.add_callback},
+  {"xrt::run::submit_wait(xrt::fence const&)", (void **) &dtbl.run.submit_wait},
+  {"xrt::run::submit_signal(xrt::fence const&)", (void **) &dtbl.run.submit_signal},
+  {"xrt::run::get_ert_packet() const", (void **) &dtbl.run.get_ert_packet},
+  {"xrt::run::set_arg_at_index(int, void const*, unsigned long)", (void **) &dtbl.run.set_arg3},
+  {"xrt::run::set_arg_at_index(int, xrt::bo const&)", (void **) &dtbl.run.set_arg2},
+  {"xrt::run::update_arg_at_index(int, void const*, unsigned long)", (void **) &dtbl.run.update_arg3},
+  {"xrt::run::update_arg_at_index(int, xrt::bo const&)", (void **) &dtbl.run.update_arg2},
+
+  /* kernel class maps */
+  {"xrt::kernel::kernel(xrt::device const&, xrt::uuid const&, std::string const&, xrt::kernel::cu_access_mode)", (void **) &dtbl.kernel.ctor},
+  {"xrt::kernel::kernel(xrt::hw_context const&, std::string const&)",  (void **) &dtbl.kernel.ctor2},
+  {"xrt::kernel::group_id(int) const",  (void **) &dtbl.kernel.group_id},
+  {"xrt::kernel::offset(int) const",  (void **) &dtbl.kernel.offset},
+  {"xrt::kernel::write_register(unsigned int, unsigned int)",  (void **) &dtbl.kernel.write_register},
+  {"xrt::kernel::read_register(unsigned int) const",  (void **) &dtbl.kernel.read_register},
+  {"xrt::kernel::get_name() const",  (void **) &dtbl.kernel.get_name},
+  {"xrt::kernel::get_xclbin() const",  (void **) &dtbl.kernel.get_xclbin},
+
+  /* xclbin class maps */
+  {"xrt::xclbin::xclbin(std::string const&)", (void **) &dtbl.xclbin.ctor_fnm },
+  {"xrt::xclbin::xclbin(axlf const*)", (void **) &dtbl.xclbin.ctor_axlf },
+  {"xrt::xclbin::xclbin(std::vector<char, std::allocator<char> > const&)", (void **) &dtbl.xclbin.ctor_raw},
+
+  /*hw_context class maps*/
+  {"xrt::hw_context::hw_context(xrt::device const&, xrt::uuid const&, xrt::hw_context::cfg_param_type const&)", (void **) &dtbl.hw_context.ctor_frm_cfg},
+  {"xrt::hw_context::hw_context(xrt::device const&, xrt::uuid const&, xrt::hw_context::access_mode)", (void **) &dtbl.hw_context.ctor_frm_mode},
+  {"xrt::hw_context::update_qos(xrt::hw_context::cfg_param_type const&)", (void **) &dtbl.hw_context.update_qos},
   // NOLINTEND(cppcoreguidelines-pro-type-cstyle-cast)
 };
 
@@ -224,7 +298,8 @@ int router::load_func_addr()
       if (nullptr == temp)
         std::cout << "Null Func address received " << std::endl;
       else
-        fptr2fname_map[*temp] = it.first;
+        fptr2fname_map[*temp] = std::regex_replace(it.first,
+                                      std::regex(R"(\)\s*const)"), ")");
     }
     else
     {
@@ -373,7 +448,11 @@ namespace xrt::tools::xbtracer {
         {"__int64", "long"},
         {"(void)", "()"},
         {"enum ", ""},
-        {"struct std::ratio<1, 1000>", "std::ratio<1l, 1000l>"}
+        {"struct std::ratio<1, 1000>", "std::ratio<1l, 1000l>"},
+        {"std::map<std::string, unsigned int, struct std::less<std::string >, "
+         "std::allocator<struct std::pair<std::string const, unsigned int> > >",
+             "xrt::hw_context::cfg_param_type"},
+        {"void *", "void*"}
       };
 
       std::string demangled_and_conditioned_str =
@@ -503,8 +582,8 @@ int idt_fixup(void* dummy)
           void** temp = ptr_itr->second;
           /* update the original function address in the dispatch table */
           *temp = reinterpret_cast<void*>(first_thunk->u1.Function);
-          fptr2fname_map[*temp] = it.first;
-
+          fptr2fname_map[*temp] = std::regex_replace(ptr_itr->first,
+                                        std::regex(R"(\)\s*const)"), ")");
           void* func_ptr = GetProcAddress(library, function_name->Name);
           if (func_ptr)
           {
@@ -520,7 +599,7 @@ int idt_fixup(void* dummy)
         }
         else if (inst_debug)
           std::cout << "func :: \"" << demangle(function_name->Name) << "\""
-                << "not found in fname2fptr_map\n";
+                    << " not found in fname2fptr_map\n";
 
         ++original_first_thunk;
         ++first_thunk;

@@ -4,9 +4,19 @@
 #pragma once
 
 #include <mutex>
+#include "experimental/xrt_ext.h"
+#include "experimental/xrt_hw_context.h"
+#include "experimental/xrt_xclbin.h"
+#include "xrt/xrt_bo.h"
 #include "xrt/xrt_device.h"
+#include "xrt/xrt_kernel.h"
 
+#include "xrt_bo_inst.h"
 #include "xrt_device_inst.h"
+#include "xrt_ext_inst.h"
+#include "xrt_hw_context_inst.h"
+#include "xrt_kernel_inst.h"
+#include "xrt_xclbin_inst.h"
 
 namespace xrt::tools::xbtracer {
 
@@ -14,6 +24,12 @@ class xrt_ftbl
 {
   public:
   xrt_device_ftbl     device;
+  xrt_bo_ftbl         bo;
+  xrt_kernel_ftbl     kernel;
+  xrt_run_ftbl        run;
+  xrt_xclbin_ftbl     xclbin;
+  xrt_hw_context_ftbl hw_context;
+  xrt_ext_ftbl        ext;
 
   static xrt_ftbl& get_instance();
 

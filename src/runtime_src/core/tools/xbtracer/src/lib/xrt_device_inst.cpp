@@ -27,6 +27,44 @@ device::device(unsigned int index)
   XRT_TOOLS_XBT_FUNC_EXIT(func);
 }
 
+device::device(const std::string& bdf)
+{
+  auto func = "xrt::device::device(const std::string&)";
+  XRT_TOOLS_XBT_CALL_CTOR(dtbl.device.ctor_bdf, this, bdf);
+  /* As pimpl will be updated only after ctor call*/
+  XRT_TOOLS_XBT_FUNC_ENTRY(func, bdf);
+  XRT_TOOLS_XBT_FUNC_EXIT(func);
+}
+
+device::device(xclDeviceHandle dhdl)
+{
+  auto func = "xrt::device::device(xclDeviceHandle)";
+  XRT_TOOLS_XBT_CALL_CTOR(dtbl.device.ctor_dhdl, this, dhdl);
+  /* As pimpl will be updated only after ctor call*/
+  XRT_TOOLS_XBT_FUNC_ENTRY(func, dhdl);
+  XRT_TOOLS_XBT_FUNC_EXIT(func);
+}
+
+uuid device::register_xclbin(const xrt::xclbin& xclbin)
+{
+  auto func = "xrt::device::register_xclbin(const xrt::xclbin&)";
+  XRT_TOOLS_XBT_FUNC_ENTRY(func, xclbin.get_handle().get());
+  uuid muuid;
+  XRT_TOOLS_XBT_CALL_METD_RET(dtbl.device.register_xclbin, muuid, xclbin);
+  XRT_TOOLS_XBT_FUNC_EXIT_RET(func, muuid);
+  return muuid;
+}
+
+uuid device::load_xclbin(const axlf* xclbin)
+{
+  auto func = "xrt::device::load_xclbin(const axlf*)";
+  XRT_TOOLS_XBT_FUNC_ENTRY(func, &xclbin);
+  uuid muuid;
+  XRT_TOOLS_XBT_CALL_METD_RET(dtbl.device.load_xclbin_axlf, muuid, xclbin);
+  XRT_TOOLS_XBT_FUNC_EXIT_RET(func, muuid);
+  return muuid;
+}
+
 uuid device::load_xclbin(const std::string& fnm)
 {
   auto func = "xrt::device::load_xclbin(const std::string&)";
@@ -63,6 +101,14 @@ uuid device::get_xclbin_uuid() const
   XRT_TOOLS_XBT_CALL_METD_RET(dtbl.device.get_xclbin_uuid, muuid);
   XRT_TOOLS_XBT_FUNC_EXIT_RET(func, muuid);
   return muuid;
+}
+
+void device::reset()
+{
+  auto func = "xrt::device::reset()";
+  XRT_TOOLS_XBT_FUNC_ENTRY(func);
+  XRT_TOOLS_XBT_CALL_METD(dtbl.device.reset);
+  XRT_TOOLS_XBT_FUNC_EXIT(func);
 }
 
 }  // namespace xrt

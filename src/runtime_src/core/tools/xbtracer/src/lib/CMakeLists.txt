@@ -4,13 +4,21 @@ set(SRCS
   capture.cpp
   logger.cpp
   xrt_device_inst.cpp
+  xrt_kernel_inst.cpp
+  xrt_bo_inst.cpp
+  xrt_hw_context_inst.cpp
+  xrt_xclbin_inst.cpp
 )
+
+set (LIBS xrt_coreutil)
 
 add_library(xrt_capture SHARED ${SRCS})
 
 if (NOT WIN32)
-  target_link_libraries(xrt_capture PRIVATE uuid)
+  list(APPEND LIBS uuid)
 endif(NOT WIN32)
+
+target_link_libraries(xrt_capture PRIVATE ${LIBS})
 
 install(TARGETS xrt_capture
   EXPORT xrt-targets
