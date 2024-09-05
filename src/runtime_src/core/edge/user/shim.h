@@ -17,6 +17,8 @@
 #include "core/common/shim/hwctx_handle.h"
 #include "core/common/shim/shared_handle.h"
 #include "core/include/xdp/app_debug.h"
+#include "core/common/shim/graph_handle.h"
+#include "core/common/error.h"
 
 #include <cstdint>
 #include <fstream>
@@ -36,6 +38,9 @@ class shim {
 
   static const int BUFFER_ALIGNMENT = 0x80; // TODO: UKP
 public:
+
+  void
+  register_xclbin(const xrt::xclbin&);
 
   // Shim handle for shared objects, like buffer and sync objects
   class shared_object : public xrt_core::shared_handle
@@ -73,11 +78,31 @@ public:
     shim* m_shim;
     xclBufferHandle m_hdl;
 
+#ifdef XRT_ENABLE_AIE    
+    zynqaie::Aie* m_aie_array{nullptr};
+#endif    
+
   public:
-    buffer_object(shim* shim, xclBufferHandle hdl)
-      : m_shim(shim)
-      , m_hdl(hdl)
-    {}
+    buffer_object(shim* shim, xclBufferHandle hdl, xrt_core::hwctx_handle* hwctx_hdl = nullptr)
+      : m_shim{shim}
+      , m_hdl{hdl}
+    {
+#ifdef XRT_ENABLE_AIE       
+      if (nullptr != hwctx_hdl) { // hwctx specific
+        auto hwctx_obj = dynamic_cast<zynqaie::hwctx_object*>(hwctx_hdl);
+
+        if (nullptr != hwctx_obj) {
+          m_aie_array = hwctx_obj->get_aie_array_from_hwctx();
+        }
+      }
+      else {
+        auto device = xrt_core::get_userpf_device(m_shim);
+        auto drv = ZYNQ::shim::handleCheck(device->get_device_handle());
+        if (drv->isAieRegistered())
+          m_aie_array = drv->getAieArray();
+      }
+#endif
+    }
 
     ~buffer_object()
     {
@@ -150,89 +175,44 @@ public:
     {
       return m_hdl;
     }
+
+    void
+    sync_aie_bo(xrt::bo& bo, const char *gmioName, bo_direction dir, size_t size, size_t offset) override
+    {
+#ifdef XRT_ENABLE_AIE       
+      if (!m_aie_array->is_context_set()) {
+        auto device = xrt_core::get_userpf_device(m_shim);
+        m_aie_array->open_context(device.get(), xrt::aie::access_mode::primary);
+      }
+
+      auto bosize = bo.size();
+
+      if (offset + size > bosize)
+        throw xrt_core::error(-EINVAL, "Sync AIE BO fails: exceed BO boundary.");
+
+      m_aie_array->sync_bo(bo, gmioName, dir, size, offset);
+#endif      
+    }
+
+    void
+    sync_aie_bo_nb(xrt::bo& bo, const char *gmioName, bo_direction dir, size_t size, size_t offset) override
+    {
+#ifdef XRT_ENABLE_AIE       
+      if (!m_aie_array->is_context_set()) {
+        auto device = xrt_core::get_userpf_device(m_shim);
+        m_aie_array->open_context(device.get(), xrt::aie::access_mode::primary);
+      }
+
+      auto bosize = bo.size();
+
+      if (offset + size > bosize)
+        throw xrt_core::error(-EINVAL, "Sync AIE NBO fails: exceed BO boundary.");
+
+      m_aie_array->sync_bo_nb(bo, gmioName, dir, size, offset);
+#endif      
+    }
+
   }; // buffer_object
-
-
-  // Shim handle for hardware context Even as hw_emu does not
-  // support hardware context, it still must implement a shim
-  // hardware context handle representing the default slot
-  class hwcontext : public xrt_core::hwctx_handle
-  {
-    shim* m_shim;
-    xrt::uuid m_uuid;
-    slot_id m_slotidx;
-    xrt::hw_context::access_mode m_mode;
-
-  public:
-    hwcontext(shim* shim, slot_id slotidx, xrt::uuid uuid, xrt::hw_context::access_mode mode)
-      : m_shim(shim)
-      , m_uuid(std::move(uuid))
-      , m_slotidx(slotidx)
-      , m_mode(mode)
-    {}
-
-    void
-    update_access_mode(access_mode mode) override
-    {
-      m_mode = mode;
-    }
-
-    slot_id
-    get_slotidx() const override
-    {
-      return m_slotidx;
-    }
-
-    xrt::hw_context::access_mode
-    get_mode() const
-    {
-      return m_mode;
-    }
-
-    xrt::uuid
-    get_xclbin_uuid() const
-    {
-      return m_uuid;
-    }
-
-    xrt_core::hwqueue_handle*
-    get_hw_queue() override
-    {
-      return nullptr;
-    }
-
-    std::unique_ptr<xrt_core::buffer_handle>
-    alloc_bo(void* userptr, size_t size, uint64_t flags) override
-    {
-      // The hwctx is embedded in the flags, use regular shim path
-      return m_shim->xclAllocUserPtrBO(userptr, size, xcl_bo_flags{flags}.flags);
-    }
-
-    std::unique_ptr<xrt_core::buffer_handle>
-    alloc_bo(size_t size, uint64_t flags) override
-    {
-      // The hwctx is embedded in the flags, use regular shim path
-      return m_shim->xclAllocBO(size, xcl_bo_flags{flags}.flags);
-    }
-
-    xrt_core::cuidx_type
-    open_cu_context(const std::string& cuname) override
-    {
-      return m_shim->open_cu_context(this, cuname);
-    }
-
-    void
-    close_cu_context(xrt_core::cuidx_type cuidx) override
-    {
-      m_shim->close_cu_context(this, cuidx);
-    }
-
-    void
-    exec_buf(xrt_core::buffer_handle* cmd) override
-    {
-      m_shim->xclExecBuf(cmd->get_xcl_handle());
-    }
-  }; // class hwcontext
 
   ~shim();
   shim(unsigned index);
@@ -250,10 +230,10 @@ public:
   int xclRegRead(uint32_t ipIndex, uint32_t offset, uint32_t *datap);
 
   std::unique_ptr<xrt_core::buffer_handle>
-  xclAllocBO(size_t size, unsigned flags);
+  xclAllocBO(size_t size, unsigned flags, xrt_core::hwctx_handle* hwctx_hdl = nullptr);
 
   std::unique_ptr<xrt_core::buffer_handle>
-  xclAllocUserPtrBO(void *userptr, size_t size, unsigned int flags);
+  xclAllocUserPtrBO(void *userptr, size_t size, unsigned int flags, xrt_core::hwctx_handle* hwctx_hdl = nullptr);
 
   std::unique_ptr<xrt_core::shared_handle>
   xclExportBO(unsigned int boHandle);
@@ -284,7 +264,13 @@ public:
   close_cu_context(const xrt_core::hwctx_handle* hwctx_hdl, xrt_core::cuidx_type cuidx);
 
   std::unique_ptr<xrt_core::hwctx_handle>
-  create_hw_context(const xrt::uuid&, const xrt::hw_context::cfg_param_type&, xrt::hw_context::access_mode);
+  create_hw_context(xclDeviceHandle handle, const xrt::uuid&, const xrt::hw_context::cfg_param_type&, xrt::hw_context::access_mode);
+
+  void
+  destroy_hw_context(xrt_core::hwctx_handle::slot_id slotidx);
+
+  void
+  hwctx_exec_buf(const xrt_core::hwctx_handle* hwctx_hdl, xclBufferHandle boh);
 ////////////////////////////////////////////////////////////////
 
   int xclOpenContext(const uuid_t xclbinId, unsigned int ipIndex, bool shared);
@@ -315,6 +301,8 @@ public:
   // Bitstream/bin download
   int xclLoadXclBin(const xclBin *buffer);
   int xclLoadAxlf(const axlf *buffer);
+  int prepare_hw_axlf(const axlf *buffer, struct drm_zocl_axlf *axlf_obj);
+  int load_hw_axlf(xclDeviceHandle handle, const xclBin *buffer, drm_zocl_create_hw_ctx *hw_ctx);
 
   int xclSyncBO(unsigned int boHandle, xclBOSyncDirection dir, size_t size,
                 size_t offset);
@@ -350,7 +338,7 @@ public:
 
 #ifdef XRT_ENABLE_AIE
   zynqaie::Aie* getAieArray();
-  zynqaie::Aied* getAied();
+  zynqaie::aied* getAied();
   int getBOInfo(drm_zocl_info_bo &info);
   void registerAieArray();
   bool isAieRegistered();
@@ -373,19 +361,20 @@ private:
   std::unique_ptr<xrt_core::bo_cache> mCmdBOCache;
   zynq_device *mDev = nullptr;
   size_t mKernelClockFreq;
+  bool hw_context_enable = false;
 
   /*
    * Mapped CU register space for xclRegRead/Write(). We support at most
    * 128 CUs and each map is of 64k bytes. Does not support debug IP access.
    */
-  std::vector<uint32_t*> mCuMaps;
+  std::vector<std::pair<uint32_t*, uint32_t>> mCuMaps;
   const size_t mCuMapSize = 64 * 1024;
   std::mutex mCuMapLock;
   int xclRegRW(bool rd, uint32_t cu_index, uint32_t offset, uint32_t *datap);
 
 #ifdef XRT_ENABLE_AIE
   std::unique_ptr<zynqaie::Aie> aieArray;
-  std::unique_ptr<zynqaie::Aied> aied;
+  std::unique_ptr<zynqaie::aied> aied;
   xrt::aie::access_mode access_mode = xrt::aie::access_mode::none;
 #endif
 };

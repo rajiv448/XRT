@@ -66,7 +66,7 @@ R"(
     }]
   },{
     "validate": [{
-      "test": ["latency", "throughput", "cmd-chain-latency", "cmd-chain-throughput", "df-bw", "tct-one-col", "tct-all-col", "gemm"]
+      "test": ["latency", "throughput", "cmd-chain-latency", "cmd-chain-throughput", "df-bw", "tct-one-col", "tct-all-col", "gemm", "aie-reconfig-overhead"]
     }]
   }]
 }]
@@ -106,11 +106,10 @@ int main( int argc, char** argv )
 
   // -- Program Description
   const std::string description = 
-  "The Xilinx (R) Board Utility (xbutil) is a standalone command line utility that"
-  " is included with the Xilinx Run Time (XRT) installation package. It includes"
-  " multiple commands to validate and identify the installed card(s) along with"
-  " additional card details including DDR, PCIe (R), shell name (DSA), and system"
-  " information.\n\nThis information can be used for both card administration and"
+  "The Xilinx (R) Run Time - System Management Interface (xrt-smi) is a standalone"
+  " command line utility that is included with the Xilinx Run Time (XRT) installation"
+  " package. It includes multiple commands to identify and validate the installed"
+  " card(s).\n\nThis information can be used for both card administration and"
   " application debugging.";
 
   // -- Ready to execute the code

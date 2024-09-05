@@ -1,6 +1,6 @@
 /**
  * Copyright (C) 2021 Xilinx, Inc
- * Copyright (C) 2022-2023 Advanced Micro Devices, Inc. - All rights reserved
+ * Copyright (C) 2022-2024 Advanced Micro Devices, Inc. - All rights reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may
  * not use this file except in compliance with the License. A copy of the
@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #include "xdp/profile/device/tracedefs.h"
+#include <iostream>
 
 namespace xdp::aie {
   struct aiecompiler_options
@@ -50,8 +51,7 @@ namespace xdp::aie {
 
 namespace xdp {
 
-
-enum class module_type {
+  enum module_type {
     core = 0,
     dma,
     shim,
@@ -59,18 +59,23 @@ enum class module_type {
     num_types
   };
 
+  enum io_type {
+    PLIO = 0,
+    GMIO
+  };
+
   struct tile_type
-  { 
+  {
     uint8_t  row;
     uint8_t  col;
-    uint8_t  subtype;
     uint8_t  stream_id;
     uint8_t  is_master;
     uint64_t itr_mem_addr;
     bool     active_core;
     bool     active_memory;
     bool     is_trigger;
-    
+    io_type  subtype;
+
     bool operator==(const tile_type &tile) const {
       return (col == tile.col) && (row == tile.row);
     }
@@ -87,8 +92,28 @@ enum class module_type {
     }
   };
 
+  struct compareTileByLoc {
+    tile_type target_tile;
+    compareTileByLoc(const tile_type& t) : target_tile(t) {}
+
+    bool operator()(const tile_type& src_tile) const {
+      return src_tile.col == target_tile.col && src_tile.row == target_tile.row;
+    }
+  };
+  struct compareTileByLocAndActiveType {
+    tile_type target_tile;
+    compareTileByLocAndActiveType(const tile_type& t) : target_tile(t) {}
+
+    bool operator()(const tile_type& src_tile) const {
+      return src_tile.col == target_tile.col &&
+             src_tile.row == target_tile.row &&
+             src_tile.active_core == target_tile.active_core &&
+             src_tile.active_memory == target_tile.active_memory;
+    }
+  };
+
   struct io_config
-  { 
+  {
     // Object id
     int id;
     // Variable name
@@ -105,9 +130,9 @@ enum class module_type {
     uint8_t channelNum;
     // Burst length
     uint8_t burstLength;
-    // I/O type - 0:PLIO, 1:GMIO
-    uint8_t type;
-  };  
+    // I/O type
+    io_type type;
+  };
 
   /*
    * Represents AIE counter configuration for a single counter
@@ -122,14 +147,14 @@ enum class module_type {
     uint8_t resetEvent;
     uint16_t startEvent;
     uint16_t endEvent;
-    uint32_t payload;
+    uint64_t payload;
     double clockFreqMhz;
     std::string module;
     std::string name;
 
     AIECounter(uint32_t i, uint8_t col, uint8_t r, uint8_t num, 
                uint16_t start, uint16_t end, uint8_t reset,
-               uint32_t load, double freq, const std::string& mod, 
+               uint64_t load, double freq, const std::string& mod, 
                const std::string& aieName)
       : id(i)
       , column(col)
@@ -314,15 +339,36 @@ enum class module_type {
     aie_cfg_tile(uint32_t c, uint32_t r, module_type t) : column(c), row(r), type(t) {}
   };
 
-  // Used by client profiling/debug
-  typedef struct {
-    uint64_t perf_address;
-  } profile_data_t;
+  struct LatencyConfig
+  {
+    public:
+      tile_type src;
+      tile_type dest;
+      std::string metricSet;
+      uint32_t tranx_no;
+      bool isSource;
+      uint8_t portId;
+      LatencyConfig() = default;
+      LatencyConfig(tile_type& s, tile_type& d, std::string m, uint32_t t, bool i) :
+        src(s), dest(d), metricSet(m), tranx_no(t), isSource(i) {}
+      void updatePortId(uint8_t& id) { portId=id; }
+  };
+      
+  struct AIEProfileFinalConfig
+  {
+    using tile_vec = std::vector<std::map<tile_type, std::string>>;
+    using tile_channel =  std::map<tile_type, uint8_t>;
 
-  typedef struct {
-    uint32_t count;
-    profile_data_t profile_data[1];
-  } aie_profile_op_t;
+    std::vector<std::map<tile_type, std::string>> configMetrics;
+    std::map<tile_type, uint8_t> configChannel0;
+    std::map<tile_type, uint8_t> configChannel1;
+
+    AIEProfileFinalConfig() {}
+    AIEProfileFinalConfig(const tile_vec& otherTileVec,  const tile_channel& cc0, const tile_channel& cc1) :
+                          configMetrics(otherTileVec), configChannel0(cc0), configChannel1(cc1)
+    {
+    }
+  };
 
 } // end namespace xdp
 

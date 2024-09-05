@@ -126,7 +126,7 @@ void AieTracePluginUnified::updateAIEDevice(void *handle) {
   (db->getStaticInfo()).setDeviceName(deviceID, "win_device");
 #else
   // Update the static database with information from xclbin
-  (db->getStaticInfo()).updateDevice(deviceID, new HalDevice(handle), handle);
+  (db->getStaticInfo()).updateDevice(deviceID, std::move(std::make_unique<HalDevice>(handle)), handle);
   std::string deviceName = util::getDeviceName(handle);
   if (deviceName != "")
     (db->getStaticInfo()).setDeviceName(deviceID, deviceName);
@@ -135,11 +135,26 @@ void AieTracePluginUnified::updateAIEDevice(void *handle) {
 
   // Metadata depends on static information from the database
   AIEData.metadata = std::make_shared<AieTraceMetadata>(deviceID, handle);
-  if (AIEData.metadata->configMetricsEmpty()) {
+  if(AIEData.metadata->aieMetadataEmpty())
+  {
+    AIEData.valid = false;
+    xrt_core::message::send(severity_level::warning, "XRT", "AIE Metadata is empty for AIE Trace");
+    return;
+  }
+  if (AIEData.metadata->configMetricsEmpty() && AIEData.metadata->getRuntimeMetrics()) {
     AIEData.valid = false;
     xrt_core::message::send(severity_level::warning, "XRT",
                             AIE_TRACE_TILES_UNAVAILABLE);
     return;
+  }
+  AIEData.valid = true; // initialize struct
+
+  //TODO: Should be removed in 2025.1 release.
+  if(!AIEData.metadata->getRuntimeMetrics())
+  {
+    xrt_core::message::send(severity_level::warning, "XRT",
+                            "AI Engine compile time event-trace arguments will be deprecated. "
+                            "Please plan to use runtime event trace by re-compiling AI Engine with --event-trace=runtime.");
   }
 
 #ifdef XDP_CLIENT_BUILD
@@ -217,21 +232,16 @@ void AieTracePluginUnified::updateAIEDevice(void *handle) {
   uint64_t aieTraceBufSize = GetTS2MMBufSize(true /*isAIETrace*/);
   bool isPLIO = (db->getStaticInfo()).getNumTracePLIO(deviceID) ? true : false;
 
-#ifdef XDP_CLIENT_BUILD
-  if (AIEData.metadata->getContinuousTrace()) {
-    xrt_core::message::send(severity_level::debug, "XRT", 
-                            "Periodic offload is not supported on this platform.");
-    AIEData.metadata->resetContinuousTrace();
-  }
-#else
   if (AIEData.metadata->getContinuousTrace())
     XDPPlugin::startWriteThread(AIEData.metadata->getFileDumpIntS(),
                                 "AIE_EVENT_TRACE", false);
-#endif
 
   // First, check against memory bank size
   // NOTE: Check first buffer for PLIO; assume bank 0 for GMIO
-  uint8_t memIndex = isPLIO ? deviceIntf->getAIETs2mmMemIndex(0) : 0;
+  uint8_t memIndex = 0;
+  if (isPLIO && (deviceIntf != nullptr))
+    memIndex = deviceIntf->getAIETs2mmMemIndex(0);
+
   Memory *memory = (db->getStaticInfo()).getMemory(deviceID, memIndex);
 
   if (memory != nullptr) {
@@ -280,6 +290,7 @@ void AieTracePluginUnified::updateAIEDevice(void *handle) {
       ,
       AIEData.metadata->getNumStreams());
 #endif
+
   auto &offloader = AIEData.offloader;
 
   // Can't call init without setting important details in offloader
@@ -338,7 +349,6 @@ void AieTracePluginUnified::updateAIEDevice(void *handle) {
   // Continuous Trace Offload is supported only for PLIO flow
   if (AIEData.metadata->getContinuousTrace())
     offloader->startOffload();
-
   xrt_core::message::send(severity_level::info, "XRT",
                           "Finished AIE Trace updateAIEDevice.");
 }

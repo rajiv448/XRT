@@ -25,6 +25,7 @@
 #include "xdp/profile/database/database.h"
 #include "xdp/profile/database/events/creator/aie_trace_data_logger.h"
 #include "xdp/profile/database/static_info/aie_constructs.h"
+#include "xdp/profile/database/static_info/aie_util.h"
 #include "xdp/profile/database/static_info/pl_constructs.h"
 #include "xdp/profile/device/pl_device_intf.h"
 #include "xdp/profile/device/tracedefs.h"
@@ -219,6 +220,143 @@ namespace xdp {
     transactionHandler = std::make_unique<aie::ClientTransaction>(context, "AIE Trace Setup");
   }
 
+
+  void AieTrace_WinImpl::build2ChannelBroadcastNetwork(void *handle, uint8_t broadcastId1, uint8_t broadcastId2, XAie_Events event) {
+
+    auto partitionCols = xdp::aie::getPartitionStartColumnsClient(handle);
+    uint8_t startCol = partitionCols[0];
+    auto numColsVec = xdp::aie::getPartitionNumColumnsClient(handle);
+    uint8_t numCols = numColsVec[0];
+
+    std::vector<uint8_t> maxRowAtCol(startCol + numCols, 0);
+    for (auto& tileMetric : metadata->getConfigMetrics()) {
+      auto tile       = tileMetric.first;
+      auto col        = tile.col;
+      auto row        = tile.row;
+      maxRowAtCol[startCol + col] = std::max(maxRowAtCol[col], (uint8_t)row);
+    }
+
+    XAie_Events bcastEvent2_PL =  (XAie_Events) (XAIE_EVENT_BROADCAST_A_0_PL + broadcastId2);
+    XAie_EventBroadcast(&aieDevInst, XAie_TileLoc(0, 0), XAIE_PL_MOD, broadcastId2, event);
+
+    for(uint8_t col = startCol; col < startCol + numCols; col++) {
+      for(uint8_t row = 0; row <= maxRowAtCol[col]; row++) {
+        module_type tileType = getTileType(row);
+        auto loc = XAie_TileLoc(col, row);
+
+        if(tileType == module_type::shim) {
+          // first channel is only used to send north
+          if(col == startCol) {
+            XAie_EventBroadcast(&aieDevInst, loc, XAIE_PL_MOD, broadcastId1, event);
+          }
+          else {
+            XAie_EventBroadcast(&aieDevInst, loc, XAIE_PL_MOD, broadcastId1, bcastEvent2_PL);
+          }
+          if(maxRowAtCol[col] != row) {
+            XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_PL_MOD, XAIE_EVENT_SWITCH_A, broadcastId1, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_EAST);
+          }
+          else {
+            XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_PL_MOD, XAIE_EVENT_SWITCH_A, broadcastId1, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_EAST | XAIE_EVENT_BROADCAST_NORTH);
+          }
+
+          // second channel is only used to send east
+          XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_PL_MOD, XAIE_EVENT_SWITCH_A, broadcastId2, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_NORTH);
+          
+          if(col != startCol + numCols - 1) {
+            XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_PL_MOD, XAIE_EVENT_SWITCH_B, broadcastId2, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_NORTH);
+          }
+          else {
+            XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_PL_MOD, XAIE_EVENT_SWITCH_B, broadcastId2, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_NORTH | XAIE_EVENT_BROADCAST_EAST);
+          }
+        }
+        else if(tileType == module_type::mem_tile) {
+          if(maxRowAtCol[col] != row) {
+            XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_MEM_MOD, XAIE_EVENT_SWITCH_A, broadcastId1, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_EAST);
+          }
+          else {
+            XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_MEM_MOD, XAIE_EVENT_SWITCH_A, broadcastId1, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_EAST | XAIE_EVENT_BROADCAST_NORTH);
+          }
+        }
+        else { //core tile
+          if(maxRowAtCol[col] != row) {
+            XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_CORE_MOD, XAIE_EVENT_SWITCH_A, broadcastId1, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST);
+          }
+          else {
+            XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_CORE_MOD, XAIE_EVENT_SWITCH_A, broadcastId1, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_NORTH);
+          }
+          XAie_EventBroadcastBlockDir(&aieDevInst, loc, XAIE_MEM_MOD,  XAIE_EVENT_SWITCH_A, broadcastId1, XAIE_EVENT_BROADCAST_SOUTH | XAIE_EVENT_BROADCAST_WEST | XAIE_EVENT_BROADCAST_EAST | XAIE_EVENT_BROADCAST_NORTH);
+        }
+      }
+    }
+  }
+
+  bool AieTrace_WinImpl::configureWindowedEventTrace(void* handle) {
+    //Start recording the transaction
+    XAie_StartTransaction(&aieDevInst, XAIE_TRANSACTION_DISABLE_AUTO_FLUSH);
+
+    auto partitionCols = xdp::aie::getPartitionStartColumnsClient(handle);
+    uint8_t startCol = partitionCols[0];
+
+    uint8_t broadcastId1 = 6;
+    uint8_t broadcastId2 = 7;
+
+    XAie_Events bcastEvent2_PL = (XAie_Events) (XAIE_EVENT_BROADCAST_A_0_PL + broadcastId2);
+    XAie_Events shimTraceStartEvent = bcastEvent2_PL;
+    XAie_Events memTileTraceStartEvent = (XAie_Events)(XAIE_EVENT_BROADCAST_0_MEM_TILE + broadcastId1);
+    XAie_Events coreModTraceStartEvent = (XAie_Events)(XAIE_EVENT_BROADCAST_0_CORE + broadcastId1);
+    XAie_Events memTraceStartEvent = (XAie_Events)(XAIE_EVENT_BROADCAST_0_MEM + broadcastId1);
+    
+    unsigned int startLayer = xrt_core::config::get_aie_trace_settings_start_layer();
+
+    // NOTE: rows are stored as absolute as required by resource manager
+    for (auto& tileMetric : metadata->getConfigMetrics()) {
+      auto tile       = tileMetric.first;
+      auto col        = tile.col;
+      auto row        = tile.row;
+      auto tileType       = getTileType(row);
+      auto loc        = XAie_TileLoc(col, row);
+      if(tileType == module_type::shim) {
+        if(startLayer != UINT_MAX) {
+          if(col == startCol) 
+            XAie_TraceStartEvent(&aieDevInst, loc, XAIE_PL_MOD, XAIE_EVENT_PERF_CNT_0_PL);
+          else 
+            XAie_TraceStartEvent(&aieDevInst, loc, XAIE_PL_MOD, shimTraceStartEvent);
+        }
+      }
+      else if(tileType == module_type::mem_tile) {
+        if(startLayer != UINT_MAX)
+          XAie_TraceStartEvent(&aieDevInst, loc, XAIE_MEM_MOD, memTileTraceStartEvent);
+      }
+      else {
+        if(startLayer != UINT_MAX) {
+          XAie_TraceStartEvent(&aieDevInst, loc, XAIE_CORE_MOD, coreModTraceStartEvent);
+          XAie_TraceStartEvent(&aieDevInst, loc, XAIE_MEM_MOD, memTraceStartEvent);
+        }
+      }
+    }
+
+    if(startLayer != UINT_MAX) {
+      XAie_PerfCounterControlSet(&aieDevInst, XAie_TileLoc(0, 0), XAIE_PL_MOD, 0, XAIE_EVENT_USER_EVENT_0_PL, XAIE_EVENT_USER_EVENT_0_PL);
+      XAie_PerfCounterEventValueSet(&aieDevInst, XAie_TileLoc(0, 0), XAIE_PL_MOD, 0, startLayer);
+    }
+
+    build2ChannelBroadcastNetwork(handle, broadcastId1, broadcastId2, XAIE_EVENT_PERF_CNT_0_PL);
+    
+    uint8_t *txn_ptr = XAie_ExportSerializedTransaction(&aieDevInst, 1, 0);
+
+    if (!transactionHandler->initializeKernel("XDP_KERNEL"))
+      return false;
+
+    if (!transactionHandler->submitTransaction(txn_ptr))
+      return false;
+    
+    // Must clear aie state
+    XAie_ClearTransaction(&aieDevInst);
+
+    xrt_core::message::send(severity_level::info, "XRT", "Finished AIE Winodwed Trace Settings. In client aie_trace.cpp");
+    return true;
+  }
+
   void AieTrace_WinImpl::updateDevice()
   {
     xrt_core::message::send(severity_level::info, "XRT", "Calling AIE Trace IPU updateDevice.");
@@ -233,6 +371,13 @@ namespace xdp {
       xrt_core::message::send(severity_level::warning, "XRT", msg);
       return;
     }
+    if(xrt_core::config::get_aie_trace_settings_start_type() == "layer") {
+      if (!configureWindowedEventTrace(metadata->getHandle())) {
+        std::string msg("Unable to configure AIE Windowed event trace");
+        xrt_core::message::send(severity_level::warning, "XRT", msg);
+        return;
+      }
+    }
   }
 
   // No CMA checks on Win
@@ -244,12 +389,12 @@ namespace xdp {
   /****************************************************************************
    * Modify events in metric set based on type and channel
    ***************************************************************************/
-  void AieTrace_WinImpl::modifyEvents(module_type type, uint16_t subtype, 
+  void AieTrace_WinImpl::modifyEvents(module_type type, io_type subtype, 
                                       const std::string metricSet, uint8_t channel, 
                                       std::vector<XAie_Events>& events)
   {
     // Only needed for GMIO DMA channel 1
-    if ((type != module_type::shim) || (subtype == 0) || (channel == 0))
+    if ((type != module_type::shim) || (subtype == io_type::PLIO) || (channel == 0))
       return;
 
     // Check type to minimize replacements
@@ -694,7 +839,7 @@ namespace xdp {
 
     std::vector<XAie_Events> comboEvents;
 
-    if (type == module_type::core) {
+    if (mod == XAIE_CORE_MOD) {
       //auto comboEvent = xaieTile.core().comboEvent(4);
       comboEvents.push_back(XAIE_EVENT_COMBO_EVENT_2_CORE);
 
@@ -873,6 +1018,8 @@ namespace xdp {
     // NOTE: for now, assume a single partition
     auto partitionCols = xdp::aie::getPartitionStartColumnsClient(handle);
     uint8_t startCol = partitionCols.at(0);
+    std::string startType = xrt_core::config::get_aie_trace_settings_start_type();
+    unsigned int startLayer = xrt_core::config::get_aie_trace_settings_start_layer();
     
     //Start recording the transaction
     XAie_StartTransaction(&aieDevInst, XAIE_TRANSACTION_DISABLE_AUTO_FLUSH);
@@ -893,22 +1040,14 @@ namespace xdp {
         mNumTileTraceEvents[m][n] = 0;
     }
 
-    // Decide when to use user event for trace end to enable flushing
-    // NOTE: This is needed to "flush" the last trace packet.
-    //       We use the event generate register to create this 
-    //       event and gracefully shut down trace modules.
-    bool useTraceFlush = false;
-    if ((metadata->getUseUserControl()) || (metadata->getUseGraphIterator()) || (metadata->getUseDelay()) ||
-        (xrt_core::config::get_aie_trace_settings_end_type() == "event1")) {
-      if (metadata->getUseUserControl())
-        coreTraceStartEvent = XAIE_EVENT_INSTR_EVENT_0_CORE;
-      coreTraceEndEvent = XAIE_EVENT_INSTR_EVENT_1_CORE;
-      useTraceFlush = true;
+    // Using user event for trace end to enable flushing
+    // NOTE: Flush trace module always at the end because for some applications
+    //       core might be running infinitely.
+    if (metadata->getUseUserControl())
+      coreTraceStartEvent = XAIE_EVENT_INSTR_EVENT_0_CORE;
+    coreTraceEndEvent = XAIE_EVENT_INSTR_EVENT_1_CORE;
 
-      if (xrt_core::config::get_verbosity() >= static_cast<uint32_t>(severity_level::info))
-        xrt_core::message::send(severity_level::info, "XRT", "Enabling trace flush");
-    }
-
+    
     // Iterate over all used/specified tiles
     // NOTE: rows are stored as absolute as required by resource manager
     //std::cout << "Config Metrics Size: " << metadata->getConfigMetrics().size() << std::endl;
@@ -924,7 +1063,7 @@ namespace xdp {
       auto loc        = XAie_TileLoc(col, row);
 
       std::stringstream cmsg;
-      cmsg << "Configuring tile (" << +col << "," << +row << ") in module type: " << typeInt << ".";
+      cmsg << "Configuring tile (" << +col << "," << +row << ") in module type: " << aie::getModuleName(type) << ".";
       xrt_core::message::send(severity_level::info, "XRT", cmsg.str());
 
       // xaiefal::XAieMod core;
@@ -938,7 +1077,7 @@ namespace xdp {
       //   memory = xaieTile.mem();
 
       // Store location to flush at end of run
-      if (useTraceFlush || (type == module_type::mem_tile) 
+      if (type == module_type::core || (type == module_type::mem_tile) 
           || (type == module_type::shim)) {
         if (type == module_type::core)
           traceFlushLocs.push_back(loc);
@@ -967,7 +1106,8 @@ namespace xdp {
         XAie_TraceModeConfig(&aieDevInst, loc, XAIE_CORE_MOD, XAIE_TRACE_INST_EXEC);
         XAie_TracePktConfig(&aieDevInst, loc, XAIE_CORE_MOD, pkt);
 
-        XAie_TraceStartEvent(&aieDevInst, loc, XAIE_CORE_MOD, coreTraceStartEvent);
+        if(startType != "layer" || startLayer ==  UINT_MAX)
+          XAie_TraceStartEvent(&aieDevInst, loc, XAIE_CORE_MOD, coreTraceStartEvent);
         (db->getStaticInfo()).addAIECfgTile(deviceId, cfgTile);
         continue;
       }
@@ -1088,7 +1228,8 @@ namespace xdp {
           break;
         if (XAie_TracePktConfig(&aieDevInst, loc, mod, pkt) != XAIE_OK)
           break;
-        XAie_TraceStartEvent(&aieDevInst, loc, mod, coreTraceStartEvent);
+        if(startType != "layer" || startLayer ==  UINT_MAX)
+          XAie_TraceStartEvent(&aieDevInst, loc, mod, coreTraceStartEvent);
       } // Core modules
 
       //
@@ -1115,7 +1256,7 @@ namespace xdp {
           aieConfig = cfgTile->memory_tile_trace_config;
 
         // Configure combo events for metric sets that include DMA events        
-        auto comboEvents = configComboEvents(loc, XAIE_CORE_MOD, module_type::dma, metricSet, aieConfig);
+        auto comboEvents = configComboEvents(loc, mod, type, metricSet, aieConfig);
         if (comboEvents.size() == 2) {
           traceStartEvent = comboEvents.at(0);
           traceEndEvent = comboEvents.at(1);
@@ -1273,8 +1414,10 @@ namespace xdp {
         //   break;
         if (XAie_TracePktConfig(&aieDevInst, loc, mod, pkt) != XAIE_OK)
           break;
-        if (XAie_TraceStartEvent(&aieDevInst, loc, mod, traceStartEvent) != XAIE_OK)
-          break;
+        if(startType != "layer" || startLayer ==  UINT_MAX) {
+          if (XAie_TraceStartEvent(&aieDevInst, loc, mod, traceStartEvent) != XAIE_OK)
+            break;
+        }
 
         // Update memory packet type in config file
         if (type == module_type::mem_tile)
@@ -1369,8 +1512,10 @@ namespace xdp {
         //   break;
         if (XAie_TracePktConfig(&aieDevInst, loc, mod, pkt) != XAIE_OK)
           break;
-        if (XAie_TraceStartEvent(&aieDevInst, loc, mod, interfaceTileTraceStartEvent) != XAIE_OK)
-          break;
+        if(startType != "layer" || startLayer ==  UINT_MAX) {
+          if (XAie_TraceStartEvent(&aieDevInst, loc, mod, interfaceTileTraceStartEvent) != XAIE_OK)
+            break;
+        }
         if (XAie_TraceStopEvent(&aieDevInst, loc, mod, interfaceTileTraceEndEvent) != XAIE_OK)
           break;
         cfgTile->interface_tile_trace_config.packet_type = packetType;

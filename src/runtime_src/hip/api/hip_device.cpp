@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (C) 2023-2024 Advanced Micro Device, Inc. All rights reserved.
+// Copyright (C) 2023-2024 Advanced Micro Devices, Inc. All rights reserved.
 
 #include "core/include/experimental/xrt_system.h"
 
@@ -17,13 +17,13 @@ device_init();
 }
 
 namespace {
-thread_local std::once_flag device_init_flag;
+//we should override clang-tidy warning by adding NOLINT since device_init_flag is non-const parameter
+thread_local std::once_flag device_init_flag; //NOLINT
 
 // Creates devices at library load
 // User may not explicitly call init or device create
 const struct X {
-  X()
-  {
+  X() noexcept {
     try {
       // needed if multi threaded
       // or else we can directly call enumerate_devices
@@ -66,7 +66,7 @@ hip_init(unsigned int flags)
   std::call_once(device_init_flag, xrt::core::hip::device_init);
 }
 
-static int
+static size_t
 hip_get_device_count()
 {
   // Get device count
@@ -146,7 +146,7 @@ hipInit(unsigned int flags)
 }
 
 hipError_t
-hipGetDeviceCount(int* count)
+hipGetDeviceCount(size_t* count)
 {
   try {
     throw_invalid_value_if(!count, "arg passed is nullptr");
@@ -207,8 +207,29 @@ hipDeviceGetName(char* name, int len, hipDevice_t device)
   return hipErrorUnknown;
 }
 
+#if HIP_VERSION >= 60000000
+#undef hipGetDeviceProperties
+
 hipError_t
 hipGetDeviceProperties(hipDeviceProp_t* props, hipDevice_t device)
+{
+  return hipErrorNotSupported;
+}
+
+hipError_t
+hipGetDevicePropertiesR0600(hipDeviceProp_tR0600* props, int device)
+#else
+using hipDeviceProp_tR0600 = hipDeviceProp_t;
+
+hipError_t
+hipGetDevicePropertiesR0600(hipDeviceProp_tR0600* props, int device)
+{
+  return hipErrorNotSupported;
+}
+
+hipError_t
+hipGetDeviceProperties(hipDeviceProp_t* props, hipDevice_t device)
+#endif
 {
   try {
     throw_invalid_value_if(!props, "arg passed is nullptr");

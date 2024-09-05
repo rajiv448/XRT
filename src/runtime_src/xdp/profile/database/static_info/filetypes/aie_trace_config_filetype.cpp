@@ -42,7 +42,6 @@ AIETraceConfigFiletype::getValidKernels() const
         xrt_core::message::send(severity_level::info, "XRT", getMessage("TileMapping.AIEKernelToTileMapping"));
         return {};
     }
-    xrt_core::message::send(severity_level::info, "XRT", "metadataReader found key: TileMapping.AIEKernelToTileMapping");
 
     for (auto const &mapping : kernelToTileMapping.get()) {
         std::string functionStr = mapping.second.get<std::string>("function");
@@ -56,8 +55,48 @@ AIETraceConfigFiletype::getValidKernels() const
             std::unique_copy(names.begin(), names.end(), std::back_inserter(kernels));
         }
     }
+    
 
     return kernels;
+}
+
+std::unordered_map<std::string, io_config>
+AIETraceConfigFiletype::getExternalBuffers() const
+{
+    std::string childStr = "aie_metadata.ExternalBuffer";
+    auto bufferMetadata = aie_meta.get_child_optional(childStr);
+    if (!bufferMetadata) {
+        xrt_core::message::send(severity_level::info, "XRT", getMessage(childStr));
+        return {};
+    }
+
+    std::unordered_map<std::string, io_config> gmios;
+
+    for (auto& buf_node : bufferMetadata.get()) {
+        io_config gmio;
+        gmio.type = io_type::GMIO;
+        gmio.name = buf_node.second.get<std::string>("portName");
+        auto direction = buf_node.second.get<std::string>("direction");
+        gmio.slaveOrMaster = (direction == "s2mm") ? 1 : 0;
+        gmio.shimColumn = buf_node.second.get<uint8_t>("shim_column");
+        gmio.channelNum = buf_node.second.get<uint8_t>("channel_number");
+        gmio.streamId = buf_node.second.get<uint8_t>("stream_id");
+        gmio.burstLength = 8;
+
+        gmios[gmio.name] = gmio;
+    }
+
+    return gmios;
+}
+
+std::unordered_map<std::string, io_config>
+AIETraceConfigFiletype::getGMIOs() const
+{
+    auto gmioMap = getChildGMIOs("aie_metadata.GMIOs");
+    if (!gmioMap.empty())
+      return gmioMap;
+    
+    return getExternalBuffers();
 }
 
 std::vector<tile_type>

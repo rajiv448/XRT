@@ -24,54 +24,11 @@ TestTCTOneColumn::TestTCTOneColumn()
   : TestRunner("tct-one-col", "Measure average TCT processing time for one column")
 {}
 
-namespace {
-
-// Copy values from text files into buff, expecting values are ascii encoded hex
-static void 
-init_instr_buf(xrt::bo &bo_instr, const std::string& dpu_file) {
-  std::ifstream dpu_stream(dpu_file);
-  if (!dpu_stream.is_open()) {
-    throw std::runtime_error(boost::str(boost::format("Failed to open %s for reading") % dpu_file));
-  }
-
-  auto instr = bo_instr.map<int*>();
-  std::string line;
-  while (std::getline(dpu_stream, line)) {
-    if (line.at(0) == '#') {
-      continue;
-    }
-    std::stringstream ss(line);
-    unsigned int word = 0;
-    ss >> std::hex >> word;
-    *(instr++) = word;
-  }
-}
-
-static size_t 
-get_instr_size(const std::string& dpu_file) {
-  std::ifstream file(dpu_file);
-  if (!file.is_open()) {
-    throw std::runtime_error(boost::str(boost::format("Failed to open %s for reading") % dpu_file));
-  }
-  size_t size = 0;
-  std::string line;
-  while (std::getline(file, line)) {
-    if (line.at(0) != '#') {
-      size++;
-    }
-  }
-  if (size == 0) {
-    throw std::runtime_error("Invalid DPU instruction length");
-  }
-  return size;
-}
-
-} //anonymous namespace
-
 boost::property_tree::ptree
 TestTCTOneColumn::run(std::shared_ptr<xrt_core::device> dev)
 {
   boost::property_tree::ptree ptree = get_test_header();
+  ptree.erase("xclbin");
 
   const auto xclbin_name = xrt_core::device_query<xrt_core::query::xclbin_name>(dev, xrt_core::query::xclbin_name::type::validate);
   auto xclbin_path = findPlatformFile(xclbin_name, ptree);
@@ -112,8 +69,19 @@ TestTCTOneColumn::run(std::shared_ptr<xrt_core::device> dev)
 
   auto working_dev = xrt::device(dev);
   working_dev.register_xclbin(xclbin);
-  xrt::hw_context hwctx{working_dev, xclbin.get_uuid()};
-  xrt::kernel kernel{hwctx, kernelName};
+
+  xrt::hw_context hwctx;
+  xrt::kernel kernel;
+  try {
+    hwctx = xrt::hw_context(working_dev, xclbin.get_uuid());
+    kernel = xrt::kernel(hwctx, kernelName);
+  }
+  catch (const std::exception& ex)
+  {
+    logger(ptree, "Error", ex.what());
+    ptree.put("status", test_token_failed);
+    return ptree;
+  }
 
   const auto seq_name = xrt_core::device_query<xrt_core::query::sequence_name>(dev, xrt_core::query::sequence_name::type::tct_one_column);
   auto dpu_instr = findPlatformFile(seq_name, ptree);

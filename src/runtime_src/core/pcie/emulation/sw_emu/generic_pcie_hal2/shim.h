@@ -27,6 +27,7 @@
 #include "core/common/xrt_profiling.h"
 #include "core/common/shim/buffer_handle.h"
 #include "core/common/shim/hwctx_handle.h"
+#include "core/common/shim/graph_handle.h"
 #include "core/include/experimental/xrt_xclbin.h"
 
 #include <fcntl.h>
@@ -146,6 +147,20 @@ namespace xclswemuhal2
       }
 
       void
+      sync_aie_bo(xrt::bo& bo, const char *gmioName, bo_direction dir, size_t size, size_t offset) override
+      {
+	if (auto ret = m_shim->xrtSyncBOAIE(bo, gmioName, dir, size, offset))
+	  throw xrt_core::system_error(ret, "fail to sync aie bo");
+      }
+
+      void
+      sync_aie_bo_nb(xrt::bo& bo, const char *gmioName, bo_direction dir, size_t size, size_t offset) override
+      {
+	if (auto ret = m_shim->xrtSyncBOAIENB(bo, gmioName, dir, size, offset))
+	  throw xrt_core::system_error(ret, "fail to sync aie bo nb");
+      }
+
+      void
       sync(direction dir, size_t size, size_t offset) override
       {
         m_shim->xclSyncBO(m_hdl, static_cast<xclBOSyncDirection>(dir), size, offset);
@@ -221,6 +236,12 @@ namespace xclswemuhal2
         return nullptr;
       }
 
+      std::unique_ptr<xrt_core::graph_handle>
+      open_graph_handle(const char* name, xrt::graph::access_mode am) override
+      {
+        return std::make_unique<xclswemuhal2::SwEmuShim::graph_object>(m_shim, m_uuid, name, am);
+      }
+
       std::unique_ptr<xrt_core::buffer_handle>
       alloc_bo(void* userptr, size_t size, uint64_t flags) override
       {
@@ -254,6 +275,91 @@ namespace xclswemuhal2
       }
     }; // class hwcontext
 
+      // Shim handle for graph object
+    class graph_object : public xrt_core::graph_handle
+    {
+      SwEmuShim* m_shim;
+      xclGraphHandle m_xclGraphHandle;
+
+    public:
+      graph_object(SwEmuShim* shim, const xrt::uuid& uuid , const char* name, xrt::graph::access_mode am)
+        : m_shim{shim},
+          m_xclGraphHandle{xclGraphOpen(m_shim, uuid.get(), name, am)}
+      {}
+
+      ~graph_object()
+      {
+         xclGraphClose(m_xclGraphHandle);
+      }
+
+      void
+      reset_graph() override
+      {
+        if (auto ret = xclGraphReset(m_xclGraphHandle))
+          throw xrt_core::system_error(ret, "fail to reset graph");
+      }
+
+      uint64_t
+      get_timestamp() override
+      {
+        return xclGraphTimeStamp(m_xclGraphHandle);
+      }
+
+      void
+      run_graph(int iterations) override
+      {
+        if (auto ret = xclGraphRun(m_xclGraphHandle, iterations))
+          throw xrt_core::system_error(ret, "fail to run graph");
+      }
+
+      int
+      wait_graph_done(int timeout) override
+      {
+        return xclGraphWaitDone(m_xclGraphHandle, timeout);
+      }
+
+      void
+      wait_graph(uint64_t cycle) override
+      {
+        if (auto ret = xclGraphWait(m_xclGraphHandle, cycle))
+          throw xrt_core::system_error(ret, "fail to wait graph");
+      }
+
+      void
+      suspend_graph() override
+      {
+        if (auto ret = xclGraphSuspend(m_xclGraphHandle))
+          throw xrt_core::system_error(ret, "fail to suspend graph");
+      }
+
+      void
+      resume_graph() override
+      {
+        if (auto ret = xclGraphResume(m_xclGraphHandle))
+          throw xrt_core::system_error(ret, "fail to resume graph");
+      }
+
+      void
+      end_graph(uint64_t cycle) override
+      {
+        if (auto ret = xclGraphEnd(m_xclGraphHandle, cycle))
+          throw xrt_core::system_error(ret, "fail to end graph");
+      }
+
+      void
+      update_graph_rtp(const char* port, const char* buffer, size_t size) override
+      {
+        if (auto ret = xclGraphUpdateRTP(m_xclGraphHandle, port, buffer, size))
+          throw xrt_core::system_error(ret, "fail to update graph rtp");
+      }
+
+      void
+      read_graph_rtp(const char* port, char* buffer, size_t size) override
+      {
+        if (auto ret = xclGraphReadRTP(m_xclGraphHandle, port, buffer, size))
+          throw xrt_core::system_error(ret, "fail to read graph rtp");
+      }
+    }; // graph_object
   public:
     static const unsigned TAG;
     static const unsigned CONTROL_AP_START;

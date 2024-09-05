@@ -8,6 +8,7 @@
 #include "core/common/config.h"
 #include <string>
 #include <iosfwd>
+#include <climits>
 
 #include <boost/property_tree/ptree_fwd.hpp>
 
@@ -254,6 +255,13 @@ get_ml_timeline_buffer_size()
 }
 
 inline bool
+get_aie_halt()
+{
+  static bool value = detail::get_bool_value("Debug.aie_halt", false);
+  return value;
+}
+
+inline bool
 get_profile_api()
 {
   static bool value = detail::get_bool_value("Debug.profile_api", false);
@@ -410,37 +418,6 @@ inline std::string
 get_platform_repo()
 {
   static std::string value = detail::get_string_value("Runtime.platform_repo_path","");
-  return value;
-}
-
-/**
- * Enable xma mode. 1 = default (1 cu cmd at a time); 2 = (upto 2 cu cmds at a time);
- *     3 = (upto 8 cu cmds at a time);  4 = (upto 64 cu cmds at a time); Max cu cmds at a time per session
- */
-inline unsigned int
-get_xma_exec_mode()
-{
-  static unsigned int value = detail::get_uint_value("Runtime.xma_exec_mode",0x1);
-  return value;
-}
-
-/**
- * Enable xma cpu mode. 1 = default (low cpu load + high perf); 2 = high perf; 3 = low cpu load
- */
-inline unsigned int
-get_xma_cpu_mode()
-{
-  static unsigned int value = detail::get_uint_value("Runtime.xma_cpu_mode",0x1);
-  return value;
-}
-
-/**
- * Use XMA with old KDS; Default for XMA is to assume KDS2.0
- */
-inline bool
-get_xma_kds_old()
-{
-  static bool value = detail::get_bool_value("Runtime.xma_kds_old",false);
   return value;
 }
 
@@ -864,6 +841,27 @@ get_aie_profile_settings_tile_based_interface_tile_metrics()
   return value;
 }
 
+inline std::string
+get_aie_profile_settings_interface_tile_latency_metrics()
+{
+  static std::string value = detail::get_string_value("AIE_profile_settings.interface_tile_latency", "");
+  return value;
+}
+
+inline std::string
+get_aie_profile_settings_start_type()
+{
+  static std::string value = detail::get_string_value("AIE_profile_settings.start_type", "time");
+  return value;
+}
+
+inline unsigned int
+get_aie_profile_settings_start_iteration()
+{
+  static unsigned int value = detail::get_uint_value("AIE_profile_settings.start_iteration", 1);
+  return value;
+}
+
 // AIE_trace_settings
 
 inline std::string
@@ -891,6 +889,13 @@ inline unsigned int
 get_aie_trace_settings_start_iteration()
 {
   static unsigned int value = detail::get_uint_value("AIE_trace_settings.start_iteration", 1);
+  return value;
+}
+
+inline unsigned int
+get_aie_trace_settings_start_layer()
+{
+  static unsigned int value = detail::get_uint_value("AIE_trace_settings.start_layer", UINT_MAX);
   return value;
 }
 

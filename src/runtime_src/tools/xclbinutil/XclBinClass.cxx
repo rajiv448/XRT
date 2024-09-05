@@ -94,6 +94,7 @@ XclBin::initializeHeader(axlf& _xclBinHeader)
   memset(_xclBinHeader.m_keyBlock, 0xFF, sizeof(_xclBinHeader.m_keyBlock));
   _xclBinHeader.m_uniqueId = time(nullptr);
   _xclBinHeader.m_header.m_timeStamp = time(nullptr);
+  _xclBinHeader.m_header.m_actionMask = 0;
 
   // Now populate the version information
   getVersionMajorMinorPath(xrt_build_version,
@@ -197,6 +198,27 @@ XclBin::readXclBinBinary(const std::string& _binaryFileName,
   }
 
   ifXclBin.close();
+}
+
+bool
+XclBin::checkForValidSection()
+{
+  if (FormattedOutput::getXclBinUuidAsString(m_xclBinHeader) != "" && 
+     FormattedOutput::getTimeStampAsString(m_xclBinHeader) != "" && 
+     m_xclBinHeader.m_header.m_length != 0 && 
+     m_xclBinHeader.m_header.m_numSections != 0)
+    return true;
+  
+  return false;
+}
+
+bool
+XclBin::checkForPlatformVbnv()
+{
+  if (FormattedOutput::getPlatformVbnvAsString(m_xclBinHeader) != "")
+    return true;
+ 
+  return false;
 }
 
 void
@@ -1527,16 +1549,15 @@ XclBin::setKeyValue(const std::string& _keyValue)
     }
 
     if (sKey == "action_mask") {
-      std::vector<std::string> masks;
-      boost::split(masks, sValue, boost::is_any_of("|"));
-      m_xclBinHeader.m_header.m_actionMask = 0;
-      for (const auto& mask : masks) {
-        if (mask == "LOAD_AIE") {
-          m_xclBinHeader.m_header.m_actionMask |= AM_LOAD_AIE;
-        } else {
-          auto errMsg = boost::format("ERROR: Unknown bit mask '%s' for the key '%s'. Key-value pair: '%s'.") % mask % sKey % _keyValue;
-          throw std::runtime_error(errMsg.str());
-        }
+      if (sValue == "LOAD_AIE") {
+        m_xclBinHeader.m_header.m_actionMask |= AM_LOAD_AIE;
+      }
+      else if (sValue == "LOAD_PDI") {
+        m_xclBinHeader.m_header.m_actionMask |= AM_LOAD_PDI; 	
+      }
+      else {
+        auto errMsg = boost::format("ERROR: Unknown bit mask '%s' for the key '%s'. Key-value pair: '%s'.") % sValue % sKey % _keyValue;
+        throw std::runtime_error(errMsg.str());
       }
       return; // Key processed
     }   

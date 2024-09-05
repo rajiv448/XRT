@@ -9,7 +9,11 @@
 #include "core/common/debug_ip.h"
 #include "core/common/query_requests.h"
 #include "core/common/xrt_profiling.h"
-
+#include "shim.h"
+#ifdef XRT_ENABLE_AIE
+#include "core/edge/user/aie/graph_object.h"
+#endif
+#include "core/edge/user/aie/profile_object.h"
 #include <map>
 #include <memory>
 #include <string>
@@ -22,18 +26,17 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
-#ifdef XRT_ENABLE_AIE
 #include "core/edge/include/zynq_ioctl.h"
 #include "aie/aiereg.h"
 #include <fcntl.h>
+#ifdef XRT_ENABLE_AIE 
 extern "C" {
 #include <xaiengine.h>
 }
-#ifndef __AIESIM__
 #include "xaiengine/xlnx-ai-engine.h"
+#endif
 #include <sys/ioctl.h>
-#endif
-#endif
+
 
 
 namespace {
@@ -453,7 +456,6 @@ struct aie_reg_read
     const auto v = std::any_cast<query::aie_reg_read::reg_type>(reg);
 
 #ifdef XRT_ENABLE_AIE
-#ifndef __AIESIM__
   const static std::string aie_tag = "aie_metadata";
   const std::string zocl_device = "/dev/dri/" + get_render_devname();
   const uint32_t major = 1;
@@ -543,12 +545,11 @@ struct aie_reg_read
   if (it == regmap.end())
     throw xrt_core::error(-EINVAL, "Invalid register");
 
-  rc = XAie_Read32(devInst, it->second + _XAie_GetTileAddr(devInst,row,col), &val);
+  rc = XAie_Read32(devInst, it->second + XAie_GetTileAddr(devInst,row,col), &val);
   if(rc != XAIE_OK)
     throw xrt_core::error(-EINVAL, boost::str(boost::format("Error reading register '%s' (0x%8x) for AIE[%u:%u]")
                                                             % v.c_str() % it->second % col % (row-1)));
 
-#endif
 #endif
     return val;
   }
@@ -1130,6 +1131,38 @@ set_cu_read_range(cuidx_type cuidx, uint32_t start, uint32_t size)
     throw xrt_core::error(ret, "failed to set cu read range");
 }
 
+std::unique_ptr<xrt_core::graph_handle>
+device_linux::
+open_graph_handle(const xrt::uuid& xclbin_id, const char* name, xrt::graph::access_mode am)
+{
+#ifdef XRT_ENABLE_AIE   
+   return std::make_unique<zynqaie::graph_object>(
+                  static_cast<ZYNQ::shim*>(get_device_handle()), xclbin_id, name, am);
+#else
+   throw xrt_core::error(std::errc::not_supported, __func__);;
+#endif   
+}
+
+std::unique_ptr<xrt_core::profile_handle>
+device_linux::
+open_profile_handle()
+{
+#ifdef XRT_ENABLE_AIE
+
+  auto drv = ZYNQ::shim::handleCheck(get_device_handle());
+
+  if (not drv->isAieRegistered())
+    throw xrt_core::error(-EINVAL, "No AIE presented");
+
+  auto aie_array = drv->getAieArray();
+
+  return std::make_unique<zynqaie::profile_object>(static_cast<ZYNQ::shim*>(get_device_handle()), aie_array);
+
+#else
+   throw xrt_core::error(std::errc::not_supported, __func__);
+#endif   
+}
+
 std::unique_ptr<buffer_handle>
 device_linux::
 import_bo(pid_t pid, shared_handle::export_handle ehdl)
@@ -1161,6 +1194,78 @@ get_sysfs_path(const std::string& subdev, const std::string& entry)
   return path_buf;
 }
 
+#ifdef XRT_ENABLE_AIE
+ 
+void
+device_linux::
+open_aie_context(xrt::aie::access_mode am)
+{
+ if (auto ret = xclAIEOpenContext(get_device_handle(), am))
+   throw error(ret, "fail to open aie context");
+}
+
+void
+device_linux::
+sync_aie_bo(xrt::bo& bo, const char *gmioName, xclBOSyncDirection dir, size_t size, size_t offset)
+{
+  if (auto ret = xclSyncBOAIE(get_device_handle(), bo, gmioName, dir, size, offset))
+    throw system_error(ret, "fail to sync aie bo");
+}
+
+void
+device_linux::
+reset_aie()
+{
+  if (auto ret = xclResetAIEArray(get_device_handle()))
+    throw system_error(ret, "fail to reset aie");
+}
+
+void
+device_linux::
+sync_aie_bo_nb(xrt::bo& bo, const char *gmioName, xclBOSyncDirection dir, size_t size, size_t offset)
+{
+  if (auto ret = xclSyncBOAIENB(get_device_handle(), bo, gmioName, dir, size, offset))
+    throw system_error(ret, "fail to sync aie non-blocking bo");
+}
+
+void
+device_linux::
+wait_gmio(const char *gmioName)
+{
+  if (auto ret = xclGMIOWait(get_device_handle(), gmioName))
+    throw system_error(ret, "fail to wait gmio");
+}
+
+int
+device_linux::
+start_profiling(int option, const char* port1Name, const char* port2Name, uint32_t value)
+{
+  return xclStartProfiling(get_device_handle(), option, port1Name, port2Name, value);
+}
+
+uint64_t
+device_linux::
+read_profiling(int phdl)
+{
+  return xclReadProfiling(get_device_handle(), phdl);
+}
+
+void
+device_linux::
+stop_profiling(int phdl)
+{
+  if (auto ret = xclStopProfiling(get_device_handle(), phdl))
+    throw system_error(ret, "failed to stop profiling");
+}
+
+void
+device_linux::
+load_axlf_meta(const axlf* buffer)
+{
+  if (auto ret = xclLoadXclBinMeta(get_device_handle(), buffer))
+    throw system_error(ret, "failed to load xclbin");
+}
+#endif
 ////////////////////////////////////////////////////////////////
 // Custom IP interrupt handling
 ////////////////////////////////////////////////////////////////

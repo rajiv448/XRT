@@ -25,6 +25,7 @@
 
 #include "xdp/profile/database/database.h"
 #include "xdp/profile/device/utility.h"
+#include "xdp/profile/device/xdp_base_device.h"
 #include "xdp/profile/plugin/vp_base/info.h"
 #include "xdp/profile/plugin/vp_base/utility.h"
 #include "xdp/profile/writer/aie_status/aie_status_writer.h"
@@ -258,7 +259,7 @@ namespace xdp {
           // Read core status and PC value
           bool coreUnstalled = false;
           uint32_t coreStatus = 0;
-          auto tileOffset = _XAie_GetTileAddr(aieDevInst, tile.row + offset, tile.col);
+          auto tileOffset = XAie_GetTileAddr(aieDevInst, tile.row + offset, tile.col);
           XAie_Read32(aieDevInst, tileOffset + AIE_OFFSET_CORE_STATUS, &coreStatus);
 
           auto& coreStallCounter = coreStuckCountMap[tile];

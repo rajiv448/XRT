@@ -103,6 +103,15 @@ namespace xdp {
     addParameter("AIE_profile_settings.tile_based_interface_tile_metrics",
                  xrt_core::config::get_aie_profile_settings_tile_based_interface_tile_metrics(),
                  "Metric set for profiling AI Engine interface tiles per tile");
+   addParameter("AIE_profile_settings.interface_tile_latency",
+                 xrt_core::config::get_aie_profile_settings_interface_tile_latency_metrics(),
+                 "Metric set for profiling AI Engine interface tiles latency between different graph ports");
+    addParameter("AIE_profile_settings.start_type",
+                 xrt_core::config::get_aie_profile_settings_start_type(),
+                 "Type of delay to use in AI Engine Profiling");
+    addParameter("AIE_profile_settings.start_iteration",
+                 xrt_core::config::get_aie_profile_settings_start_iteration(),
+                 "Iteration count when graph type delay is used in AI Engine Profiling");
 
     // AIE Trace
     addParameter("AIE_trace_settings.start_type",
@@ -114,6 +123,9 @@ namespace xdp {
     addParameter("AIE_trace_settings.start_iteration",
                  xrt_core::config::get_aie_trace_settings_start_iteration(),
                  "Iteration count when graph type delay is used in AI Engine Trace");
+    addParameter("AIE_trace_settings.start_layer",
+                 xrt_core::config::get_aie_trace_settings_start_layer(),
+                 "layer wise windowed AI Engine Trace");
     addParameter("AIE_trace_settings.graph_based_aie_tile_metrics",
                  xrt_core::config::get_aie_trace_settings_graph_based_aie_tile_metrics(),
                  "Configuration level used for AI Engine trace per graph");

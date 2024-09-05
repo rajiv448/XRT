@@ -35,54 +35,11 @@ TestGemm::TestGemm()
   : TestRunner("gemm", "Measure the TOPS value of GEMM operations")
 {}
 
-namespace {
-
-// Copy values from text files into buff, expecting values are ascii encoded hex
-static void 
-init_instr_buf(xrt::bo &bo_instr, const std::string& dpu_file) {
-  std::ifstream dpu_stream(dpu_file);
-  if (!dpu_stream.is_open()) {
-    throw std::runtime_error(boost::str(boost::format("Failed to open %s for reading") % dpu_file));
-  }
-
-  auto instr = bo_instr.map<int*>();
-  std::string line;
-  while (std::getline(dpu_stream, line)) {
-    if (line.at(0) == '#') {
-      continue;
-    }
-    std::stringstream ss(line);
-    unsigned int word = 0;
-    ss >> std::hex >> word;
-    *(instr++) = word;
-  }
-}
-
-static size_t 
-get_instr_size(const std::string& dpu_file) {
-  std::ifstream file(dpu_file);
-  if (!file.is_open()) {
-    throw std::runtime_error(boost::str(boost::format("Failed to open %s for reading") % dpu_file));
-  }
-  size_t size = 0;
-  std::string line;
-  while (std::getline(file, line)) {
-    if (line.at(0) != '#') {
-      size++;
-    }
-  }
-  if (size == 0) {
-    throw std::runtime_error("Invalid DPU instruction length");
-  }
-  return size;
-}
-
-} //anonymous namespace
-
 boost::property_tree::ptree
 TestGemm::run(std::shared_ptr<xrt_core::device> dev)
 {
   boost::property_tree::ptree ptree = get_test_header();
+  ptree.erase("xclbin");
 
   const auto xclbin_name = xrt_core::device_query<xrt_core::query::xclbin_name>(dev, xrt_core::query::xclbin_name::type::gemm);
   auto xclbin_path = findPlatformFile(xclbin_name, ptree);
@@ -122,8 +79,19 @@ TestGemm::run(std::shared_ptr<xrt_core::device> dev)
 
   auto working_dev = xrt::device(dev);
   working_dev.register_xclbin(xclbin);
-  xrt::hw_context hwctx{working_dev, xclbin.get_uuid()};
-  xrt::kernel kernel{hwctx, kernelName};
+
+  xrt::hw_context hwctx;
+  xrt::kernel kernel;
+  try {
+    hwctx = xrt::hw_context(working_dev, xclbin.get_uuid());
+    kernel = xrt::kernel(hwctx, kernelName);
+  } 
+  catch (const std::exception& ex)
+  {
+    logger(ptree, "Error", ex.what());
+    ptree.put("status", test_token_failed);
+    return ptree;
+  }
 
   const auto seq_name = xrt_core::device_query<xrt_core::query::sequence_name>(dev, xrt_core::query::sequence_name::type::gemm_int8);
   auto dpu_instr = findPlatformFile(seq_name, ptree);
@@ -157,12 +125,11 @@ TestGemm::run(std::shared_ptr<xrt_core::device> dev)
 
   //set to performance mode
   xrt_core::device_update<xrt_core::query::performance_mode>(dev.get(), xrt_core::query::performance_mode::power_type::high);
-  // 5 second delay gives the clocks time to reach the targeted frequency
-  // remove this when VITIS-11934 is fixed
-  std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 
+  // wait until clock reaches the targeted frequency
+  auto const target_h_clock_freq = 1810;
   int ipu_hclock = 0;
-  try {
+  while (ipu_hclock < target_h_clock_freq) {
     //get h-clock
     auto raw = xrt_core::device_query<xrt_core::query::clock_freq_topology_raw>(dev);
     auto clock_topology = reinterpret_cast<const clock_freq_topology*>(raw.data());
@@ -170,7 +137,10 @@ TestGemm::run(std::shared_ptr<xrt_core::device> dev)
       if(boost::iequals(clock_topology->m_clock_freq[c].m_name, "H CLock"))
         ipu_hclock = clock_topology->m_clock_freq[c].m_freq_Mhz;
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
 
+  try {
     //run kernel
     auto run = kernel(host_app, NULL, NULL, NULL, NULL, bo_instr, instr_size, NULL);
     // Wait for kernel to be done

@@ -11,6 +11,8 @@
 #include "core/common/shim/hwctx_handle.h"
 #include "core/include/shim_int.h"
 #include "core/include/xdp/counters.h"
+#include "core/common/shim/graph_handle.h"
+#include "core/common/shim/profile_handle.h"
 
 #include "xrt/xrt_aie.h"
 #include "xrt/xrt_bo.h"
@@ -197,71 +199,55 @@ struct ishim
   virtual std::cv_status
   wait_ip_interrupt(xclInterruptNotifyHandle, int32_t)
   { throw not_supported_error{__func__}; }
+
+  virtual std::unique_ptr<graph_handle>
+  open_graph_handle(const xrt::uuid&, const char*, xrt::graph::access_mode)
+  {
+    throw not_supported_error{__func__};
+  }
+
+  virtual std::unique_ptr<profile_handle>
+  open_profile_handle()
+  {
+    throw not_supported_error{__func__};
+  }  
   ////////////////////////////////////////////////////////////////
 
-#ifdef XRT_ENABLE_AIE
-  virtual xclGraphHandle
-  open_graph(const xrt::uuid&, const char*, xrt::graph::access_mode am) = 0;
+  virtual void
+  open_aie_context(xrt::aie::access_mode)
+  { throw not_supported_error{__func__}; }
 
   virtual void
-  close_graph(xclGraphHandle handle) = 0;
+  sync_aie_bo(xrt::bo&, const char*, xclBOSyncDirection, size_t , size_t )
+  { throw not_supported_error{__func__}; }
 
   virtual void
-  reset_graph(xclGraphHandle handle) = 0;
-
-  virtual uint64_t
-  get_timestamp(xclGraphHandle handle) = 0;
+  reset_aie()
+  { throw not_supported_error{__func__}; }
 
   virtual void
-  run_graph(xclGraphHandle handle, int iterations) = 0;
+  sync_aie_bo_nb(xrt::bo&, const char*, xclBOSyncDirection, size_t, size_t)
+  { throw not_supported_error{__func__}; }
+
+  virtual void
+  wait_gmio(const char*)
+  { throw not_supported_error{__func__}; }
 
   virtual int
-  wait_graph_done(xclGraphHandle handle, int timeout) = 0;
-
-  virtual void
-  wait_graph(xclGraphHandle handle, uint64_t cycle) = 0;
-
-  virtual void
-  suspend_graph(xclGraphHandle handle) = 0;
-
-  virtual void
-  resume_graph(xclGraphHandle handle) = 0;
-
-  virtual void
-  end_graph(xclGraphHandle handle, uint64_t cycle) = 0;
-
-  virtual void
-  update_graph_rtp(xclGraphHandle handle, const char* port, const char* buffer, size_t size) = 0;
-
-  virtual void
-  read_graph_rtp(xclGraphHandle handle, const char* port, char* buffer, size_t size) = 0;
-
-  virtual void
-  open_aie_context(xrt::aie::access_mode) = 0;
-
-  virtual void
-  sync_aie_bo(xrt::bo& bo, const char *gmioName, xclBOSyncDirection dir, size_t size, size_t offset) = 0;
-
-  virtual void
-  reset_aie() = 0;
-
-  virtual void
-  sync_aie_bo_nb(xrt::bo& bo, const char *gmioName, xclBOSyncDirection dir, size_t size, size_t offset) = 0;
-
-  virtual void
-  wait_gmio(const char *gmioName) = 0;
-
-  virtual int
-  start_profiling(int option, const char* port1Name, const char* port2Name, uint32_t value) = 0;
+  start_profiling(int, const char*, const char*, uint32_t)
+  { throw not_supported_error{__func__}; }
 
   virtual uint64_t
-  read_profiling(int phdl) = 0;
+  read_profiling(int)
+  { throw not_supported_error{__func__}; }
 
   virtual void
-  stop_profiling(int phdl) = 0;
+  stop_profiling(int)
+  { throw not_supported_error{__func__}; }
 
   virtual void
-  load_axlf_meta(const axlf*) = 0;
+  load_axlf_meta(const axlf*)
+  { throw not_supported_error{__func__}; }
 
   virtual std::vector<char>
   read_aie_mem(uint16_t /*col*/, uint16_t /*row*/, uint32_t /*offset*/, uint32_t /*size*/)
@@ -278,7 +264,6 @@ struct ishim
   virtual bool
   write_aie_reg(uint16_t /*col*/, uint16_t /*row*/, uint32_t /*reg_addr*/, uint32_t /*reg_val*/)
   { throw not_supported_error{__func__}; }
-#endif
 };
 
 template <typename DeviceType>
@@ -433,152 +418,6 @@ struct shim : public DeviceType
     if (auto ret = xclInternalResetDevice(DeviceType::get_device_handle(), kind))
       throw error(ret, "failed to reset device");
   }
-
-#ifdef XRT_ENABLE_AIE
-  xclGraphHandle
-  open_graph(const xrt::uuid& uuid, const char *gname, xrt::graph::access_mode am) override
-  {
-    if (auto ghdl = xclGraphOpen(DeviceType::get_device_handle(), uuid.get(), gname, am))
-      return ghdl;
-
-    throw system_error(EINVAL, "failed to open graph");
-  }
-
-  void
-  close_graph(xclGraphHandle handle) override
-  {
-    return xclGraphClose(handle);
-  }
-
-  void
-  reset_graph(xclGraphHandle handle) override
-  {
-    if (auto ret = xclGraphReset(handle))
-      throw system_error(ret, "fail to reset graph");
-  }
-
-  uint64_t
-  get_timestamp(xclGraphHandle handle) override
-  {
-    return xclGraphTimeStamp(handle);
-  }
-
-  void
-  run_graph(xclGraphHandle handle, int iterations) override
-  {
-    if (auto ret = xclGraphRun(handle, iterations))
-      throw system_error(ret, "fail to run graph");
-  }
-
-  int
-  wait_graph_done(xclGraphHandle handle, int timeout) override
-  {
-    return xclGraphWaitDone(handle, timeout);
-  }
-
-  void
-  wait_graph(xclGraphHandle handle, uint64_t cycle) override
-  {
-    if (auto ret = xclGraphWait(handle, cycle))
-      throw system_error(ret, "fail to wait graph");
-  }
-
-  void
-  suspend_graph(xclGraphHandle handle) override
-  {
-    if (auto ret = xclGraphSuspend(handle))
-      throw system_error(ret, "fail to suspend graph");
-  }
-
-  void
-  resume_graph(xclGraphHandle handle) override
-  {
-    if (auto ret = xclGraphResume(handle))
-      throw system_error(ret, "fail to resume graph");
-  }
-
-  void
-  end_graph(xclGraphHandle handle, uint64_t cycle) override
-  {
-    if (auto ret = xclGraphEnd(handle, cycle))
-      throw system_error(ret, "fail to end graph");
-  }
-
-  void
-  update_graph_rtp(xclGraphHandle handle, const char* port, const char* buffer, size_t size) override
-  {
-    if (auto ret = xclGraphUpdateRTP(handle, port, buffer, size))
-      throw system_error(ret, "fail to update graph rtp");
-  }
-
-  void
-  read_graph_rtp(xclGraphHandle handle, const char* port, char* buffer, size_t size) override
-  {
-    if (auto ret = xclGraphReadRTP(handle, port, buffer, size))
-      throw system_error(ret, "fail to read graph rtp");
-  }
-
-  void
-  open_aie_context(xrt::aie::access_mode am) override
-  {
-    if (auto ret = xclAIEOpenContext(DeviceType::get_device_handle(), am))
-      throw error(ret, "fail to open aie context");
-  }
-
-  void
-  sync_aie_bo(xrt::bo& bo, const char *gmioName, xclBOSyncDirection dir, size_t size, size_t offset) override
-  {
-    if (auto ret = xclSyncBOAIE(DeviceType::get_device_handle(), bo, gmioName, dir, size, offset))
-      throw system_error(ret, "fail to sync aie bo");
-  }
-
-  void
-  reset_aie() override
-  {
-    if (auto ret = xclResetAIEArray(DeviceType::get_device_handle()))
-      throw system_error(ret, "fail to reset aie");
-  }
-
-  void
-  sync_aie_bo_nb(xrt::bo& bo, const char *gmioName, xclBOSyncDirection dir, size_t size, size_t offset) override
-  {
-    if (auto ret = xclSyncBOAIENB(DeviceType::get_device_handle(), bo, gmioName, dir, size, offset))
-      throw system_error(ret, "fail to sync aie non-blocking bo");
-  }
-
-  void
-  wait_gmio(const char *gmioName) override
-  {
-    if (auto ret = xclGMIOWait(DeviceType::get_device_handle(), gmioName))
-      throw system_error(ret, "fail to wait gmio");
-  }
-
-  int
-  start_profiling(int option, const char* port1Name, const char* port2Name, uint32_t value) override
-  {
-    return xclStartProfiling(DeviceType::get_device_handle(), option, port1Name, port2Name, value);
-  }
-
-  uint64_t
-  read_profiling(int phdl) override
-  {
-    return xclReadProfiling(DeviceType::get_device_handle(), phdl);
-  }
-
-  void
-  stop_profiling(int phdl) override
-  {
-    if (auto ret = xclStopProfiling(DeviceType::get_device_handle(), phdl))
-      throw system_error(ret, "failed to stop profiling");
-  }
-
-  void
-  load_axlf_meta(const axlf* buffer) override
-  {
-    if (auto ret = xclLoadXclBinMeta(DeviceType::get_device_handle(), buffer))
-      throw system_error(ret, "failed to load xclbin");
-  }
-#endif
 };
 
 // Stub out all xrt_core::ishim functions to throw not supported. A
@@ -699,134 +538,6 @@ struct noshim : public DeviceType
   {
     throw ishim::not_supported_error(__func__);
   }
-
-#ifdef XRT_ENABLE_AIE
-  xclGraphHandle
-  open_graph(const xrt::uuid&, const char*, xrt::graph::access_mode) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  close_graph(xclGraphHandle) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  reset_graph(xclGraphHandle) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  uint64_t
-  get_timestamp(xclGraphHandle) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  run_graph(xclGraphHandle, int) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  int
-  wait_graph_done(xclGraphHandle, int) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  wait_graph(xclGraphHandle, uint64_t) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  suspend_graph(xclGraphHandle) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  resume_graph(xclGraphHandle) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  end_graph(xclGraphHandle, uint64_t) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  update_graph_rtp(xclGraphHandle, const char*, const char*, size_t) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  read_graph_rtp(xclGraphHandle, const char*, char*, size_t) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  open_aie_context(xrt::aie::access_mode) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  sync_aie_bo(xrt::bo&, const char*, xclBOSyncDirection, size_t, size_t) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  reset_aie() override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  sync_aie_bo_nb(xrt::bo&, const char*, xclBOSyncDirection, size_t, size_t) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  wait_gmio(const char*) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  int
-  start_profiling(int, const char*, const char*, uint32_t) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  uint64_t
-  read_profiling(int) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  stop_profiling(int) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-
-  void
-  load_axlf_meta(const axlf*) override
-  {
-    throw ishim::not_supported_error(__func__);
-  }
-#endif
 };
 
 } // xrt_core

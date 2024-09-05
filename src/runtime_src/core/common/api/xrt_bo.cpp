@@ -430,16 +430,15 @@ public:
     sync(XCL_BO_SYNC_BO_TO_DEVICE, sz, dst_offset);
   }
 
-#ifdef XRT_ENABLE_AIE
   void
   sync(xrt::bo& bo, const std::string& port, xclBOSyncDirection dir, size_t sz, size_t offset)
   {
-    device->sync_aie_bo(bo, port.c_str(), dir, sz, offset);
+    //call sync & async functions with "Buffer handle" instead of with device, so that it could be handled with both device & hwctx
+    handle->sync_aie_bo(bo, port.c_str(), dir, sz, offset);
   }
 
   xrt::bo::async_handle
   async(xrt::bo& bo, const std::string& port, xclBOSyncDirection dir, size_t sz, size_t offset);
-#endif
 
   xrt::bo::async_handle
   async(xrt::bo& bo, xclBOSyncDirection dir, size_t sz, size_t offset);
@@ -529,7 +528,6 @@ public:
   }
 };
 
-#ifdef XRT_ENABLE_AIE
 class aie::bo::async_handle_impl : public xrt::bo::async_handle_impl
 {
   // class for holding AIE BO Async DMA transfer information
@@ -614,12 +612,13 @@ xrt::bo::async_handle
 bo_impl::
 async(xrt::bo& bo, const std::string& port, xclBOSyncDirection dir, size_t sz, size_t offset)
 {
-  device->sync_aie_bo_nb(bo, port.c_str(), dir, sz, offset);
+  //call sync & async functions with "Buffer handle" instead of with device, so that it could be handled with both device & hwctx
+  handle->sync_aie_bo_nb(bo, port.c_str(), dir, sz, offset);
+
   auto a_bo_impl = std::make_shared<xrt::aie::bo::async_handle_impl>(bo, 0, port);
 
   return xrt::bo::async_handle{a_bo_impl};
 }
-#endif // XRT_ENABLE_AIE
 
 xrt::bo::async_handle
 bo_impl::
@@ -1051,7 +1050,7 @@ alloc_bo(const device_type& device, size_t sz, xrtBufferFlags flags, xrtMemoryGr
   catch (const std::exception& ex) {
     if (flags == XRT_BO_FLAGS_HOST_ONLY) {
       auto fmt = boost::format("Failed to allocate host memory buffer (%s), make sure host bank is enabled "
-                               "(see xbutil configure --host-mem)") % ex.what();
+                               "(see xrt-smi configure --host-mem)") % ex.what();
       send_exception_message(fmt.str());
     }
     throw;
@@ -1696,7 +1695,6 @@ create_debug_bo(const xrt::hw_context& hwctx, size_t sz)
 
 } // xrt_core::bo_int
 
-#ifdef XRT_ENABLE_AIE
 ////////////////////////////////////////////////////////////////
 // xrt_aie_bo C++ API implmentations (xrt_aie.h)
 ////////////////////////////////////////////////////////////////
@@ -1717,7 +1715,6 @@ sync(const std::string& port, xclBOSyncDirection dir, size_t sz, size_t offset)
 }
 
 } // namespace xrt::aie
-#endif
 
 ////////////////////////////////////////////////////////////////
 // xrt_bo API implmentations (xrt_bo.h)

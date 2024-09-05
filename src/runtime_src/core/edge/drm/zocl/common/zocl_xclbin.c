@@ -89,23 +89,24 @@ zocl_load_partial(struct drm_zocl_dev *zdev, const char *buffer, int length,
 
 	if (!slot->pr_isolation_addr) {
 		DRM_ERROR("PR isolation address is not set");
-		return -ENODEV;
+	} else {
+		map = ioremap(slot->pr_isolation_addr, PR_ISO_SIZE);
+		if (IS_ERR_OR_NULL(map)) {
+			DRM_ERROR("ioremap PR isolation address 0x%llx failed",
+				  slot->pr_isolation_addr);
+			return -EFAULT;
+		}
+		/* Freeze PR ISOLATION IP for bitstream download */
+		iowrite32(slot->pr_isolation_freeze, map);
 	}
 
-	map = ioremap(slot->pr_isolation_addr, PR_ISO_SIZE);
-	if (IS_ERR_OR_NULL(map)) {
-		DRM_ERROR("ioremap PR isolation address 0x%llx failed",
-		    slot->pr_isolation_addr);
-		return -EFAULT;
-	}
-
-	/* Freeze PR ISOLATION IP for bitstream download */
-	iowrite32(slot->pr_isolation_freeze, map);
 	err = zocl_fpga_mgr_load(zdev, buffer, length, FPGA_MGR_PARTIAL_RECONFIG);
-	/* Unfreeze PR ISOLATION IP */
-	iowrite32(slot->pr_isolation_unfreeze, map);
+	if (map) {
+		/* Unfreeze PR ISOLATION IP */
+		iowrite32(slot->pr_isolation_unfreeze, map);
+		iounmap(map);
+	}
 
-	iounmap(map);
 	return err;
 }
 
@@ -152,6 +153,36 @@ zocl_load_bitstream(struct drm_zocl_dev *zdev, char *buffer, int length,
 		return zocl_load_partial(zdev, data, bit_header.BitstreamLength, slot);
 	/* 0 is for full bitstream */
 	return zocl_fpga_mgr_load(zdev, buffer, length, 0);
+}
+
+int
+zocl_load_aie_only_pdi(struct drm_zocl_dev *zdev, struct axlf *axlf,
+			char __user *xclbin, struct kds_client *client)
+{
+	uint64_t size = 0;
+	char *pdi_buf = NULL;
+	int ret = 0;
+
+	if (client && client->aie_ctx == ZOCL_CTX_SHARED) {
+		DRM_ERROR("%s Shared context can not load xclbin", __func__);
+		return -EPERM;
+	}
+
+	size = zocl_read_sect(PDI, &pdi_buf, axlf, xclbin);
+	if (size == 0)
+		return 0;
+
+	ret = zocl_fpga_mgr_load(zdev, pdi_buf, size, FPGA_MGR_PARTIAL_RECONFIG);
+	vfree(pdi_buf);
+
+	/* Mark AIE out of reset state after load PDI */
+	if (zdev->aie) {
+		mutex_lock(&zdev->aie_lock);
+		zdev->aie->aie_reset = false;
+		mutex_unlock(&zdev->aie_lock);
+	}
+
+	return ret;
 }
 
 int
@@ -303,6 +334,9 @@ zocl_update_apertures(struct drm_zocl_dev *zdev, struct drm_zocl_slot *slot)
 	int total = 0;
 	int apt_idx = 0;
 	int i = 0;
+        char kname[64] = {0};
+        char *kname_p = NULL;
+      	struct kernel_info *krnl_info = NULL;
 
 	/* Update aperture should only happen when loading xclbin */
 	if (slot->ip)
@@ -336,8 +370,18 @@ zocl_update_apertures(struct drm_zocl_dev *zdev, struct drm_zocl_slot *slot)
 			apt = &zdev->cu_subdev.apertures[apt_idx];
 
 			apt->addr = ip->m_base_address;
-			apt->size = CU_SIZE;
-			apt->prop = ip->properties;
+                        
+                        strncpy(kname, ip->m_name, sizeof(kname));
+		        kname[sizeof(kname)-1] = '\0';
+		        kname_p = &kname[0];
+		        strncpy(kname, strsep(&kname_p, ":"), sizeof(kname));
+		        kname[sizeof(kname)-1] = '\0';
+                        krnl_info = zocl_query_kernel(slot, kname);
+		        if (krnl_info && krnl_info->range >= CU_SIZE)
+                                apt->size = krnl_info->range;
+                        else
+			        apt->size = CU_SIZE;
+                        apt->prop = ip->properties;
 			apt->cu_idx = -1;
 			apt->slot_idx = slot->slot_idx;
 		}

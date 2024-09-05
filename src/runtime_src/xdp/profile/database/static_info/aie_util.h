@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2022-2023 Advanced Micro Devices, Inc. - All rights reserved
+ * Copyright (C) 2022-2024 Advanced Micro Devices, Inc. - All rights reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may
  * not use this file except in compliance with the License. A copy of the
@@ -95,7 +95,20 @@ namespace xdp::aie {
   uint8_t convertStringToUint8(const std::string& input);
 
   XDP_CORE_EXPORT
+  std::string uint8ToStr(const uint8_t& value);
+
+  XDP_CORE_EXPORT
   std::vector<uint8_t> getPartitionStartColumnsClient(void* handle);
+
+  XDP_CORE_EXPORT
+  bool isDigitString(const std::string& str);
+
+  XDP_CORE_EXPORT
+  std::vector<uint8_t> getPartitionNumColumnsClient(void* handle);
+
+  XDP_CORE_EXPORT
+  boost::property_tree::ptree
+  getAIEPartitionInfoClient(void* hwCtxImpl);
 
 } // namespace xdp::aie
 

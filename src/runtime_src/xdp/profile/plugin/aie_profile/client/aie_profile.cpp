@@ -87,7 +87,7 @@ namespace xdp {
     int counterId = 0;
     bool runtimeCounters = false;
     // inputs to the DPU kernel
-    std::vector<profile_data_t> op_profile_data;
+    std::vector<register_data_t> op_profile_data;
 
     xdp::aie::driver_config meta_config = metadata->getAIEConfigMetadata();
 
@@ -209,7 +209,7 @@ namespace xdp {
 
           std::vector<uint64_t> Regs = regValues.at(type);
           // 25 is column offset and 20 is row offset for IPU
-          op_profile_data.emplace_back(profile_data_t{Regs[i] + (col << 25) + (row << 20)});
+          op_profile_data.emplace_back(register_data_t{Regs[i] + (col << 25) + (row << 20)});
 
           std::vector<uint64_t> values;
           uint8_t absCol = col + startCol;
@@ -231,11 +231,11 @@ namespace xdp {
 
     } // modules
 
-    op_size = sizeof(aie_profile_op_t) + sizeof(profile_data_t) * (counterId - 1);
-    op = (aie_profile_op_t*)malloc(op_size);
+    op_size = sizeof(read_register_op_t) + sizeof(register_data_t) * (counterId - 1);
+    op = (read_register_op_t*)malloc(op_size);
     op->count = counterId;
     for (int i = 0; i < op_profile_data.size(); i++) {
-      op->profile_data[i] = op_profile_data[i];
+      op->data[i] = op_profile_data[i];
     }
     
     uint8_t *txn_ptr = XAie_ExportSerializedTransaction(&aieDevInst, 1, 0);
@@ -310,8 +310,11 @@ namespace xdp {
 
     auto context = metadata->getHwContext();
     xrt::bo resultBO;
+    uint32_t* output = nullptr;
     try {
       resultBO = xrt_core::bo_int::create_debug_bo(context, 0x20000);
+      output = resultBO.map<uint32_t*>();
+      memset(output, 0, 0x20000);
     } catch (std::exception& e) {
       std::stringstream msg;
       msg << "Unable to create 128KB buffer for AIE Profile results. Cannot get AIE Profile info. " << e.what() << std::endl;
@@ -323,13 +326,8 @@ namespace xdp {
     double timestamp = xrt_core::time_ns() / 1.0e6;
 
     XAie_StartTransaction(&aieDevInst, XAIE_TRANSACTION_DISABLE_AUTO_FLUSH);
-    // Profiling is 3rd custom OP
-    XAie_RequestCustomTxnOp(&aieDevInst);
-    XAie_RequestCustomTxnOp(&aieDevInst);
-    
-    auto read_op_code_ = XAie_RequestCustomTxnOp(&aieDevInst);
 
-    XAie_AddCustomTxnOp(&aieDevInst, (uint8_t)read_op_code_, (void*)op, op_size);
+    XAie_AddCustomTxnOp(&aieDevInst, XAIE_IO_CUSTOM_OP_READ_REGS, (void*)op, op_size);
     uint8_t *txn_ptr = XAie_ExportSerializedTransaction(&aieDevInst, 1, 0);
 
     // If we haven't properly initialized the transaction handler, don't poll
@@ -342,12 +340,10 @@ namespace xdp {
     XAie_ClearTransaction(&aieDevInst);
 
     resultBO.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-    auto resultBOMap = resultBO.map<uint8_t*>();
-    uint32_t* output = reinterpret_cast<uint32_t*>(resultBOMap);
 
     for (uint32_t i = 0; i < op->count; i++) {
       std::stringstream msg;
-      msg << "Counter address/values: 0x" << std::hex << op->profile_data[i].perf_address << ": " << std::dec << output[i];
+      msg << "Counter address/values: 0x" << std::hex << op->data[i].address << ": " << std::dec << output[i];
       xrt_core::message::send(xrt_core::message::severity_level::debug, "XRT", msg.str());
       std::vector<uint64_t> values = outputValues[i];
       values[5] = static_cast<uint64_t>(output[i]); //write pc value

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (C) 2023 Advanced Micro Device, Inc. All rights reserved.
+# Copyright (C) 2023 Advanced Micro Devices, Inc. All rights reserved.
 
 # config file for getting hip headers
 include(hip_config.cmake)
@@ -60,6 +60,7 @@ install(TARGETS xrt_hip
 # Release headers
 install (FILES
   config.h
+  xrt_hip.h
   DESTINATION ${XRT_INSTALL_INCLUDE_DIR}/hip
   COMPONENT ${XRT_DEV_COMPONENT}
 )

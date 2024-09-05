@@ -159,7 +159,7 @@ namespace xdp::aie::trace {
 
     std::vector<XAie_Events> comboEvents;
 
-    if (type == module_type::core) {
+    if (mod == XAIE_CORE_MOD) {
       auto comboEvent = xaieTile.core().comboEvent(4);
       comboEvents.push_back(XAIE_EVENT_COMBO_EVENT_2_CORE);
 
@@ -317,7 +317,7 @@ namespace xdp::aie::trace {
           "Configuring memory tile edge events to detect rise and fall of event " 
           + std::to_string(eventNum));
 
-      auto tileOffset = _XAie_GetTileAddr(aieDevInst, tile.row, tile.col);
+      auto tileOffset = XAie_GetTileAddr(aieDevInst, tile.row, tile.col);
       XAie_Write32(aieDevInst, tileOffset + AIE_OFFSET_EDGE_CONTROL_MEM_TILE, 
                    edgeEventsValue);
       return;
@@ -345,7 +345,7 @@ namespace xdp::aie::trace {
         "Configuring AIE tile edge events to detect rise and fall of event " 
         + std::to_string(eventNum));
 
-    auto tileOffset = _XAie_GetTileAddr(aieDevInst, tile.row, tile.col);
+    auto tileOffset = XAie_GetTileAddr(aieDevInst, tile.row, tile.col);
     XAie_Write32(aieDevInst, tileOffset + AIE_OFFSET_EDGE_CONTROL_MEM, 
                  edgeEventsValue);
   }

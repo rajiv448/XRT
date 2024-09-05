@@ -127,8 +127,8 @@ ReportHost::writeReport(const xrt_core::device* /*_pDevice*/,
           % lib.get<std::string>("version", "N/A");
     }
     _output << boost::format("  %-20s : %s\n") % "Model" % _pt.get<std::string>("host.os.model");
-    _output << boost::format("  %-20s : %s\n") % "BIOS vendor" % _pt.get<std::string>("host.os.bios_vendor");
-    _output << boost::format("  %-20s : %s\n") % "BIOS version" % _pt.get<std::string>("host.os.bios_version");
+    _output << boost::format("  %-20s : %s\n") % "BIOS Vendor" % _pt.get<std::string>("host.os.bios_vendor");
+    _output << boost::format("  %-20s : %s\n") % "BIOS Version" % _pt.get<std::string>("host.os.bios_version");
     _output << std::endl;
     _output << "XRT\n";
     _output << boost::format("  %-20s : %s\n") % "Version" % _pt.get<std::string>("host.xrt.version", "N/A");
@@ -139,13 +139,14 @@ ReportHost::writeReport(const xrt_core::device* /*_pDevice*/,
     for(auto& drv : available_drivers) {
       const boost::property_tree::ptree& driver = drv.second;
       std::string drv_name = driver.get<std::string>("name", "N/A");
-      boost::algorithm::to_lower(drv_name);
       std::string drv_hash = driver.get<std::string>("hash", "N/A");
       if (!boost::iequals(drv_hash, "N/A")) {
         _output << boost::format("  %-20s : %s, %s\n") % drv_name
             % driver.get<std::string>("version", "N/A") % driver.get<std::string>("hash", "N/A");
-      } else
-        _output << boost::format("  %-20s : %s\n") % drv_name % driver.get<std::string>("version", "N/A");
+      } else {
+        std::string drv_version = boost::iequals(drv_name, "N/A") ? drv_name : drv_name.append(" Version");
+        _output << boost::format("  %-20s : %s\n") % drv_version % driver.get<std::string>("version", "N/A");
+      }
       if (boost::iequals(drv_name, "xclmgmt") && boost::iequals(driver.get<std::string>("version", "N/A"), "unknown"))
         _output << "WARNING: xclmgmt version is unknown. Is xclmgmt driver loaded? Or is MSD/MPD running?" << std::endl;
     }
@@ -169,7 +170,7 @@ ReportHost::writeReport(const xrt_core::device* /*_pDevice*/,
     //no device available
   }
 
-  _output << std::endl << "Devices present\n";
+  _output << std::endl << "Device(s) Present\n";
   if (available_devices.empty())
     _output << "  0 devices found" << std::endl;
 

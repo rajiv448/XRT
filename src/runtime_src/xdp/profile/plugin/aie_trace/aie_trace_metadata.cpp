@@ -55,10 +55,24 @@ namespace xdp {
     counterScheme = xrt_core::config::get_aie_trace_settings_counter_scheme();
     // Get polling interval (in usec)
     pollingInterval = xrt_core::config::get_aie_trace_settings_poll_timers_interval_us();
-
+    
     // Check whether continuous trace is enabled in xrt.ini
-    // AIE trace is now supported for HW only
     continuousTrace = xrt_core::config::get_aie_trace_settings_periodic_offload();
+    // AIE trace is now supported for HW only
+#ifdef XDP_CLIENT_BUILD
+    // Default return is flipped on client
+    bool isPeriodicOffloadPresent = false;
+    auto tree1 = xrt_core::config::detail::get_ptree_value("AIE_trace_settings");
+    for (pt::ptree::iterator pos = tree1.begin(); pos != tree1.end(); pos++) {
+      if (pos->first == "periodic_offload") {
+        isPeriodicOffloadPresent = true;
+        break;
+      }
+    }
+    if( !isPeriodicOffloadPresent)
+      continuousTrace = false;
+#endif
+
     if (continuousTrace)
       offloadIntervalUs = xrt_core::config::get_aie_trace_settings_buffer_offload_interval_us();
 
@@ -519,7 +533,9 @@ namespace xdp {
           tile.active_memory = true;
 
           // Make sure tile is used
-          if (allValidTiles.find(tile) == allValidTiles.end()) {
+          auto it = std::find_if(allValidTiles.begin(), allValidTiles.end(),
+                                 compareTileByLoc(tile));
+          if (it == allValidTiles.end()) {
             std::stringstream msg;
             msg << "Specified Tile {" << std::to_string(tile.col) << ","
                 << std::to_string(tile.row) << "} is not active. Hence skipped.";
@@ -541,7 +557,7 @@ namespace xdp {
     // Pass 3 : process only single tile metric setting 
     for (size_t i = 0; i < metricsSettings.size(); ++i) {
       // Check if already processed or invalid format
-      if ((processed.find(i) != processed.end()) || (metrics[i].size() < 3))
+      if ((processed.find(i) != processed.end()) || (metrics[i].size() < 2))
         continue;
 
       uint8_t col = 0;
@@ -570,7 +586,9 @@ namespace xdp {
       tile.active_memory = true;
 
       // Make sure tile is used
-      if (allValidTiles.find(tile) == allValidTiles.end()) {
+      auto it = std::find_if(allValidTiles.begin(), allValidTiles.end(),
+                             compareTileByLoc(tile));
+      if (it == allValidTiles.end()) {
         std::stringstream msg;
         msg << "Specified Tile {" << std::to_string(tile.col) << ","
             << std::to_string(tile.row) << "} is not active. Hence skipped.";
@@ -931,7 +949,7 @@ namespace xdp {
       }
 
       // Check for PLIO tiles and it's compatible metric settings
-      if ((tileMetric.first.subtype == 0) && isGMIOMetric(tileMetric.second)) {
+      if ((tileMetric.first.subtype == io_type::PLIO) && isGMIOMetric(tileMetric.second)) {
         if (showWarningGMIOMetric) {
           std::string msg = "Configured interface_tile metric set " + tileMetric.second 
                           + " is only applicable for GMIO type tiles.";
